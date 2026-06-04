@@ -68,3 +68,14 @@ struct VertexPosUV
     Vector3 pos;
     Vector2 uv;
 };
+
+// Screen-space vertex for the UI system.
+// pos  — screen pixels, top-left origin, Y-down
+// uv   — texture coordinates
+// color — RGBA [0..1]
+struct VertexUI
+{
+    Vector2 pos;
+    Vector2 uv;
+    Color4  color;
+};

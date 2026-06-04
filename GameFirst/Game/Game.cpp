@@ -1,5 +1,9 @@
 #include "pch.h"
 #include "Game.h"
+#include "../Engine/UI/UICanvas.h"
+#include "../Engine/UI/UIPanel.h"
+#include "../Engine/UI/UIText.h"
+#include "../Engine/UI/Font.h"
 #include "JsonUtil.h"
 #include "Mesh.h"
 #include "Profiler.h"
@@ -98,6 +102,33 @@ bool Game::Init(int width, int height)
         m_actors.push_back(cameraActor);
     }
 
+    // UI canvas — must be initialized after LoadShaders so the "UI" shader is ready.
+    m_uiCanvas = new UICanvas();
+    if (!m_uiCanvas->Init(&m_renderer, m_renderer.GetScreenWidth(), m_renderer.GetScreenHeight()))
+    {
+        SDL_Log("Game::Init — UICanvas init failed");
+        delete m_uiCanvas;
+        m_uiCanvas = nullptr;
+    }
+
+    // FPS counter — top-left corner
+    m_uiFont = new Font();
+    if (m_uiCanvas && m_uiFont->Load("Assets/Fonts/consola.ttf", 20.f, &m_renderer))
+    {
+        m_fpsText = new UIText();
+        m_fpsText->SetFont(m_uiFont);
+        m_fpsText->SetText("FPS: --");
+        m_fpsText->SetPosition(8.f, 8.f);
+        m_fpsText->SetColor(Color4(0.f, 1.f, 0.f, 1.f));
+        m_uiCanvas->AddWidget(m_fpsText);
+    }
+    else
+    {
+        SDL_Log("Game::Init — failed to load UI font; FPS counter disabled");
+        delete m_uiFont;
+        m_uiFont = nullptr;
+    }
+
     m_ticksCount = SDL_GetTicks();
     return true;
 }
@@ -107,6 +138,10 @@ bool Game::Init(int width, int height)
 void Game::Shutdown()
 {
     JobManager::Get()->End();
+
+    m_fpsText = nullptr; // owned by UICanvas
+    if (m_uiCanvas) { m_uiCanvas->Shutdown(); delete m_uiCanvas; m_uiCanvas = nullptr; }
+    delete m_uiFont; m_uiFont = nullptr;
 
     delete[] m_lastKeyState;
     delete[] m_keyState;
@@ -212,6 +247,16 @@ void Game::UpdateGame()
         {
             actor->Update(deltaTime);
         }
+
+        if (m_uiCanvas)
+            m_uiCanvas->Update(deltaTime);
+
+        if (m_fpsText && deltaTime > 0.f)
+        {
+            char buf[32];
+            SDL_snprintf(buf, sizeof(buf), "FPS: %.0f", 1.0f / deltaTime);
+            m_fpsText->SetText(buf);
+        }
     }
     JobManager::Get()->WaitForJobs();
 }
@@ -221,6 +266,13 @@ void Game::UpdateGame()
 void Game::RenderFrame()
 {
     PROFILE_SCOPE(RenderFrame);
+
+    // Build and upload UI geometry before acquiring the frame command buffer.
+    // UploadBuffer submits its own command buffer; doing this first guarantees
+    // the vertex data is ready when the UI render pass executes.
+    if (m_uiCanvas)
+        m_uiCanvas->Prepare();
+
     // acquire the command buffer
     SDL_GPUCommandBuffer* commandBuffer = m_renderer.BeginCommandBuffer();
     if (nullptr == commandBuffer)
@@ -342,6 +394,13 @@ void Game::RenderFrame()
         m_vertexBuffer->Draw(commandBuffer, renderPass);
         m_renderer.EndRenderPass(renderPass);
     }
+    //Pass 9: UI overlay
+    if (m_uiCanvas)
+    {
+        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer);
+        m_uiCanvas->Render(commandBuffer, renderPass, m_assetManager->GetShader("UI"));
+        m_renderer.EndRenderPass(renderPass);
+    }
     {   // submit the command buffer
         m_renderer.EndCommandBuffer(commandBuffer);
     }
@@ -419,6 +478,9 @@ void Game::OnResize(int w, int h)
 
     m_renderer.OnResize(w, h);
     m_camera->SetScreenSize(w, h);
+
+    if (m_uiCanvas)
+        m_uiCanvas->OnResize(w, h);
 }
 
 /// Load a level creating instances of all the actors listed
@@ -698,6 +760,24 @@ void Game::LoadShaders()
         // no SetColorTarget — back buffer
         copyAddShader->CreatePipeline(copyAddAttribs, ARRAY_SIZE(copyAddAttribs), sizeof(VertexPosUV));
         m_assetManager->SetShader("CopyAdd", copyAddShader);
+    }
+
+    {
+        // UI shader — screen-space 2D, alpha-blended, no depth test, renders to back buffer.
+        // Vertex format: VertexUI { Vector2 pos, Vector2 uv, Color4 color }
+        Shader* uiShader = new Shader(Renderer::Get(), "Shaders/UI.hlsl");
+        SDL_GPUVertexAttribute uiAttribs[] = {
+            { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexUI, pos)   },
+            { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexUI, uv)    },
+            { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(VertexUI, color) }
+        };
+        uiShader->SetZWrite(false);
+        uiShader->SetZTest(false);
+        uiShader->SetBlend(true,
+            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA);
+        uiShader->CreatePipeline(uiAttribs, ARRAY_SIZE(uiAttribs), sizeof(VertexUI));
+        m_assetManager->SetShader("UI", uiShader);
     }
 
     {

@@ -2,6 +2,7 @@
 #include "Renderer.h"
 #include "EngineMath.h"
 #include "../Engine/TestCube.h"
+#include "../Engine/UI/UICanvas.h"
 
 class Game {
 public:
@@ -49,6 +50,11 @@ private:
     class Lighting* m_lighting = nullptr;
     class Physics* m_physics = nullptr;
     VertexBuffer* m_vertexBuffer = nullptr;
+
+    // UI
+    UICanvas*  m_uiCanvas = nullptr;
+    class Font*    m_uiFont   = nullptr;
+    class UIText*  m_fpsText  = nullptr;  // non-owning; UICanvas owns it
 
     //render target
     Texture* m_renderTarget = nullptr;

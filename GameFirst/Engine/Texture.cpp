@@ -2,6 +2,7 @@
 #include "Texture.h"
 #include "Profiler.h"
 #include "Renderer.h"
+#include <vector>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
 
@@ -76,6 +77,21 @@ bool Texture::CreateSolidColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a, const
 {
     const unsigned char pixel[4] = { r, g, b, a };
     return UploadRGBA(pixel, 1, 1, name);
+}
+
+/// Create from an 8-bit alpha-only bitmap (e.g. a stb_truetype glyph atlas).
+/// Expands each byte to RGBA (255, 255, 255, alpha) so the UI shader can tint text via vertex color.
+bool Texture::CreateFromAlpha(const uint8_t* alphaData, int width, int height, const char* name)
+{
+    std::vector<unsigned char> rgba(width * height * 4);
+    for (int i = 0; i < width * height; ++i)
+    {
+        rgba[i * 4 + 0] = 255;
+        rgba[i * 4 + 1] = 255;
+        rgba[i * 4 + 2] = 255;
+        rgba[i * 4 + 3] = alphaData[i];
+    }
+    return UploadRGBA(rgba.data(), width, height, name);
 }
 
 /// Shared GPU upload: creates an RGBA8 sampler texture from raw 4-channel pixel data

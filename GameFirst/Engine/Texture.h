@@ -20,6 +20,9 @@ public:
     SDL_GPUTextureFormat GetFormat() const { return m_format; }
     SDL_GPUTexture* GetTexture() { return m_texture; }
     void SetActive(SDL_GPURenderPass* renderPass, int slot) const;
+    // Create from an 8-bit alpha-only bitmap (e.g. a stb_truetype glyph atlas).
+    // Stored internally as RGBA (255,255,255,alpha) so the shader can tint it.
+    bool CreateFromAlpha(const uint8_t* alphaData, int width, int height, const char* name);
     bool CreateRenderTarget(int width, int height, SDL_GPUTextureFormat format, const char* name);
     void Resize(int newWidth, int newHeight);
 
