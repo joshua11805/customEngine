@@ -1,0 +1,129 @@
+{
+  "metadata": {
+    "type": "itplevel",
+    "version": 3
+  },
+
+  "camera": {
+    "position": [ 0.0, 0.0, 64.0 ],
+    "rotation": [ 0.0, 0.0, 0.0, 1.0 ]
+  },
+
+  "lightingData": {
+    "ambient": [ 0.6, 0.6, 0.6 ]
+  },
+
+  "actors": [
+    {
+      "position": [ 1000.0, 0.0, -10.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 20.0,
+      "mesh": "Assets/Meshes/Platform.itpmesh3",
+      "components": []
+    },
+
+    {
+      "position": [ 400.0, 0.0, 0.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 1.0,
+      "mesh": "Assets/Meshes/scene.gltf",
+      "components": []
+    },
+
+    {
+      "position": [ 500.0, -250.0, 100.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 1.0,
+      "mesh": "Assets/Meshes/LightSphere.itpmesh3",
+      "components": [
+        {
+          "type": "TargetMover",
+          "axis": [ 0.0, 1.0, 0.0 ],
+          "angularFreq": 2.0,
+          "amplitude": 150.0,
+          "timeOffset": 0.0
+        }
+      ]
+    },
+
+    {
+      "position": [ 500.0, 0.0, 100.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 1.0,
+      "mesh": "Assets/Meshes/LightSphere.itpmesh3",
+      "components": [
+        {
+          "type": "TargetMover",
+          "axis": [ 0.0, 1.0, 0.0 ],
+          "angularFreq": 1.5,
+          "amplitude": 200.0,
+          "timeOffset": 1.0
+        }
+      ]
+    },
+
+    {
+      "position": [ 500.0, 250.0, 100.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 1.0,
+      "mesh": "Assets/Meshes/LightSphere.itpmesh3",
+      "components": [
+        {
+          "type": "TargetMover",
+          "axis": [ 0.0, 1.0, 0.0 ],
+          "angularFreq": 1.8,
+          "amplitude": 120.0,
+          "timeOffset": 2.5
+        }
+      ]
+    },
+
+    {
+      "position": [ 800.0, -200.0, 150.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 1.0,
+      "mesh": "Assets/Meshes/LightSphere.itpmesh3",
+      "components": [
+        {
+          "type": "TargetMover",
+          "axis": [ 0.0, 0.0, 1.0 ],
+          "angularFreq": 1.2,
+          "amplitude": 80.0,
+          "timeOffset": 0.8
+        }
+      ]
+    },
+
+    {
+      "position": [ 800.0, 200.0, 150.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 1.0,
+      "mesh": "Assets/Meshes/LightSphere.itpmesh3",
+      "components": [
+        {
+          "type": "TargetMover",
+          "axis": [ 0.0, 0.0, 1.0 ],
+          "angularFreq": 1.6,
+          "amplitude": 90.0,
+          "timeOffset": 1.5
+        }
+      ]
+    },
+
+    {
+      "position": [ 700.0, 0.0, 180.0 ],
+      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "scale": 1.0,
+      "mesh": "Assets/Meshes/LightSphere.itpmesh3",
+      "components": [
+        {
+          "type": "TargetMover",
+          "axis": [ 0.0, 1.0, 0.0 ],
+          "angularFreq": 0.9,
+          "amplitude": 220.0,
+          "timeOffset": 3.2
+        }
+      ]
+    }
+  ]
+}
