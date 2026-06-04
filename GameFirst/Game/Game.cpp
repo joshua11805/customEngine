@@ -51,23 +51,37 @@ bool Game::Init(int width, int height)
     }
 
     m_assetManager = new AssetManager();
+
+    int w = m_renderer.GetScreenWidth();
+    int h = m_renderer.GetScreenHeight();
+
+    // Scene editor target — raw scene, editor camera, no post-fx
+    m_sceneEditorTarget = new Texture();
+    m_sceneEditorTarget->CreateRenderTarget(w, h, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "SceneEditorTarget");
+
+    // Game pipeline targets
+    m_gameTarget = new Texture();
+    m_gameTarget->CreateRenderTarget(w, h, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, "GameTarget");
+
     m_renderTarget = new Texture();
-    m_renderTarget->CreateRenderTarget(m_renderer.GetScreenWidth(), m_renderer.GetScreenHeight(), SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "FullSizeTarget");
+    m_renderTarget->CreateRenderTarget(w, h, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "GameIntermediateTarget");
 
     m_halfTarget = new Texture();
-    m_halfTarget->CreateRenderTarget(m_renderer.GetScreenWidth()/2, m_renderer.GetScreenHeight()/2, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "HalfSizeTarget");
+    m_halfTarget->CreateRenderTarget(w/2, h/2, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "HalfSizeTarget");
 
     m_qTarget1 = new Texture();
-    m_qTarget1->CreateRenderTarget(m_renderer.GetScreenWidth()/4, m_renderer.GetScreenHeight()/4, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "FullSizeTarget");
+    m_qTarget1->CreateRenderTarget(w/4, h/4, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "QuarterTarget1");
 
     m_qTarget2 = new Texture();
-    m_qTarget2->CreateRenderTarget(m_renderer.GetScreenWidth()/4, m_renderer.GetScreenHeight()/4, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "FullSizeTarget");
+    m_qTarget2->CreateRenderTarget(w/4, h/4, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, "QuarterTarget2");
 
     LoadShaders();
 
     {
-        //create the camera
+        //create the game camera (play mode)
         m_camera = new Camera(&m_renderer);
+        //create the editor camera (scene view)
+        m_editorCamera = new Camera(&m_renderer);
         //create the lighting
         m_lighting = new Lighting();
         //create physics before load level
@@ -97,6 +111,7 @@ bool Game::Init(int width, int height)
         );
 
         Actor* cameraActor = new Actor(nullptr);
+        cameraActor->SetName("Camera");
         cameraActor->SetWorldMat(Matrix4::CreateTranslation(Vector3(0, 0, 0)));
         FPSCamera* fps = new FPSCamera(cameraActor, this);
         cameraActor->AddComponent(fps);
@@ -139,6 +154,18 @@ bool Game::Init(int width, int height)
         m_editorLayer = nullptr;
     }
 
+    // Default scene camera: matches the EditorLayer's initial position/yaw/pitch
+    // so the first frame renders correctly before any input.
+    {
+        float yaw   = Math::Pi;
+        float pitch = -0.2f;
+        Vector3 pos(500.f, 0.f, 100.f);
+        Matrix4 rot = Matrix4::CreateRotationY(pitch) * Matrix4::CreateRotationZ(yaw);
+        Matrix4 cam = rot * Matrix4::CreateTranslation(pos);
+        cam.Invert();
+        m_sceneCameraMatrix = cam;
+    }
+
     m_ticksCount = SDL_GetTicks();
     return true;
 }
@@ -169,6 +196,8 @@ void Game::Shutdown()
 
     delete m_camera;
     m_camera = nullptr;
+    delete m_editorCamera;
+    m_editorCamera = nullptr;
 
     m_assetManager->Clear();
     delete m_assetManager;
@@ -176,6 +205,12 @@ void Game::Shutdown()
 
     delete m_physics;
     m_physics = nullptr;
+
+    delete m_sceneEditorTarget;
+    m_sceneEditorTarget = nullptr;
+
+    delete m_gameTarget;
+    m_gameTarget = nullptr;
 
     delete m_renderTarget;
     m_renderTarget = nullptr;
@@ -254,14 +289,14 @@ void Game::UpdateGame()
             deltaTime = 0.033f;
         }
 
-        //update all actors
-        for (Actor* actor : m_actors)
+        if (m_isPlaying)
         {
-            actor->Update(deltaTime);
-        }
+            for (Actor* actor : m_actors)
+                actor->Update(deltaTime);
 
-        if (m_uiCanvas)
-            m_uiCanvas->Update(deltaTime);
+            if (m_uiCanvas)
+                m_uiCanvas->Update(deltaTime);
+        }
 
         if (m_fpsText && deltaTime > 0.f)
         {
@@ -272,8 +307,21 @@ void Game::UpdateGame()
 
         if (m_editorLayer)
         {
-            m_editorLayer->BeginFrame();
-            // panels are built inside BeginFrame for now
+            EditorFrameData frameData;
+            frameData.actors        = &m_actors;
+            frameData.sceneEditorRT = m_sceneEditorTarget;
+            frameData.gameRT        = m_gameTarget;
+            frameData.isPlaying     = m_isPlaying;
+            frameData.selectedActor = &m_selectedActor;
+            frameData.outSceneCamera = &m_sceneCameraMatrix;
+
+            EditorCallbacks callbacks;
+            callbacks.userData  = this;
+            callbacks.setPlaying = [](void* ud, bool playing) {
+                static_cast<Game*>(ud)->SetPlaying(playing);
+            };
+
+            m_editorLayer->BeginFrame(frameData, callbacks);
             m_editorLayer->EndFrame();
         }
     }
@@ -281,160 +329,159 @@ void Game::UpdateGame()
 }
 
 /// Render this frame of output
-/// Remember, we are building a command buffer to send to the GPU - The GPU will do the actual rendering asynchronously
 void Game::RenderFrame()
 {
     PROFILE_SCOPE(RenderFrame);
 
-    // Upload UI geometry (submits its own command buffer — must be before BeginCommandBuffer).
     if (m_uiCanvas)
         m_uiCanvas->Prepare();
 
-    // acquire the command buffer
     SDL_GPUCommandBuffer* commandBuffer = m_renderer.BeginCommandBuffer();
-    if (nullptr == commandBuffer)
+    if (!commandBuffer)
         return;
 
-    {   // first render pass to offload onto offscreen texture
-        SDL_GPURenderPass* renderPass = m_renderer.ClearScreen(commandBuffer, SDL_FColor(0.0f, 0.2f, 0.4f, 1.0f), m_renderTarget);
+    // ── Pass 1: Scene editor view (always) ────────────────────────────────
+    // Renders actors using the editor camera into m_sceneEditorTarget.
+    // No post-processing — raw lit scene for the Scene View panel.
+    {
+        m_editorCamera->SetWorldToCamera(m_sceneCameraMatrix);
 
+        SDL_GPURenderPass* pass = m_renderer.ClearScreen(
+            commandBuffer, SDL_FColor(0.08f, 0.08f, 0.10f, 1.f), m_sceneEditorTarget);
+
+        m_editorCamera->SetActive(commandBuffer);
+        m_lighting->SetActive(m_editorCamera, commandBuffer);
+        for (Actor* a : m_actors)
+            a->Draw(commandBuffer, pass);
+
+        m_renderer.EndRenderPass(pass);
+    }
+
+    // ── Passes 2-9: Full game pipeline (only when playing) ────────────────
+    // Renders into m_renderTarget (intermediate), bloom-processes it,
+    // then composites crosshair + UI into m_gameTarget for the Game View panel.
+    if (m_isPlaying)
+    {
+        // Pass 2: main scene → m_renderTarget (game camera)
         {
-            //set camera active
-            m_camera->SetActive(commandBuffer);
-            //set lighting active
-            m_lighting->SetActive(m_camera, commandBuffer);
+            SDL_GPURenderPass* pass = m_renderer.ClearScreen(
+                commandBuffer, SDL_FColor(0.0f, 0.2f, 0.4f, 1.f), m_renderTarget);
 
-            //draw actors
+            m_camera->SetActive(commandBuffer);
+            m_lighting->SetActive(m_camera, commandBuffer);
             for (Actor* a : m_actors)
-            {
-                a->Draw(commandBuffer, renderPass);
-            }
+                a->Draw(commandBuffer, pass);
+
+            m_renderer.EndRenderPass(pass);
         }
 
-        // end the render pass
-        m_renderer.EndRenderPass(renderPass);
+        // Pass 3: bloom mask → m_halfTarget
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_halfTarget);
+            m_assetManager->GetShader("Bloom")->SetActive(pass);
+            m_renderTarget->SetActive(pass, 0);
+            m_vertexBuffer->Draw(commandBuffer, pass);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        // Pass 4: downsample → m_qTarget1
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_qTarget1);
+            m_assetManager->GetShader("Copy")->SetActive(pass);
+            m_halfTarget->SetActive(pass, 0);
+            m_vertexBuffer->Draw(commandBuffer, pass);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        float texelW = 1.f / (m_renderer.GetScreenWidth()  / 4.f);
+        float texelH = 1.f / (m_renderer.GetScreenHeight() / 4.f);
+
+        // Pass 5: horizontal blur → m_qTarget2
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_qTarget2);
+            m_assetManager->GetShader("BlurH")->SetActive(pass);
+            m_qTarget1->SetActive(pass, 0);
+            BlurConstants bc{ Vector2(1.f,0.f), Vector2(texelW,texelH) };
+            SDL_PushGPUFragmentUniformData(commandBuffer, 0, &bc, sizeof(bc));
+            m_vertexBuffer->Draw(commandBuffer, pass);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        // Pass 6: vertical blur → m_qTarget1
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_qTarget1);
+            m_assetManager->GetShader("BlurV")->SetActive(pass);
+            m_qTarget2->SetActive(pass, 0);
+            BlurConstants bc{ Vector2(0.f,1.f), Vector2(texelW,texelH) };
+            SDL_PushGPUFragmentUniformData(commandBuffer, 0, &bc, sizeof(bc));
+            m_vertexBuffer->Draw(commandBuffer, pass);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        // Pass 7: copy scene → m_gameTarget
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_gameTarget);
+            m_assetManager->GetShader("GameCopy")->SetActive(pass);
+            m_renderTarget->SetActive(pass, 0);
+            m_vertexBuffer->Draw(commandBuffer, pass);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        // Pass 8: additive bloom → m_gameTarget
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_gameTarget);
+            m_assetManager->GetShader("GameCopyAdd")->SetActive(pass);
+            m_qTarget1->SetActive(pass, 0);
+            m_vertexBuffer->Draw(commandBuffer, pass);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        // Pass 9: crosshair → m_gameTarget
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_gameTarget);
+            m_assetManager->GetShader("GameCrosshair")->SetActive(pass);
+            CrosshairConstants cc;
+            cc.c_screenSize = Vector2(static_cast<float>(m_renderer.GetScreenWidth()),
+                                      static_cast<float>(m_renderer.GetScreenHeight()));
+            cc._pad[0] = cc._pad[1] = 0.f;
+            SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cc, sizeof(cc));
+            m_vertexBuffer->Draw(commandBuffer, pass);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        // Pass 10: UI overlay → m_gameTarget
+        if (m_uiCanvas)
+        {
+            SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_gameTarget);
+            m_uiCanvas->Render(commandBuffer, pass, m_assetManager->GetShader("GameUI"));
+            m_renderer.EndRenderPass(pass);
+        }
     }
-    //second render pass - copy off-screen texture back to backbuffer
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer, m_halfTarget);
 
-        //bind copy shader
-        Shader* bloomMask = m_assetManager->GetShader("Bloom");
-        bloomMask->SetActive(renderPass);
-
-        //bind offscreen texture to slot 0
-        m_renderTarget->SetActive(renderPass, 0);
-        m_vertexBuffer->Draw(commandBuffer, renderPass);
-
-        m_renderer.EndRenderPass(renderPass);
-    }
-    //pass #3 copy from halfsize to quarter size
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer, m_qTarget1);
-        Shader* copy = m_assetManager->GetShader("Copy");
-        copy->SetActive(renderPass);
-
-        m_halfTarget->SetActive(renderPass, 0);
-        m_vertexBuffer->Draw(commandBuffer, renderPass);
-
-        m_renderer.EndRenderPass(renderPass);
-    }
-
-    //pass #4: horizontal blur
-    float texelW = 1.0f / (m_renderer.GetScreenWidth() / 4.0f);
-    float texelH = 1.0f / (m_renderer.GetScreenHeight() / 4.0f);
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer, m_qTarget2);
-        Shader* blurH = m_assetManager->GetShader("BlurH");
-        blurH->SetActive(renderPass);
-        m_qTarget1->SetActive(renderPass, 0);
-
-        // push horizontal blur constants
-        BlurConstants blurConsts;
-        blurConsts.c_blurDir   = Vector2(1.0f, 0.0f);  // horizontal
-        blurConsts.c_texelSize = Vector2(texelW, texelH);
-        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &blurConsts, sizeof(blurConsts));
-
-        m_vertexBuffer->Draw(commandBuffer, renderPass);
-        m_renderer.EndRenderPass(renderPass);
-    }
-    //Pass #5: vertical blur
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer, m_qTarget1);
-        Shader* blurV = m_assetManager->GetShader("BlurV");
-        blurV->SetActive(renderPass);
-        m_qTarget2->SetActive(renderPass, 0);
-
-        // push vertical blur constants
-        BlurConstants blurConsts;
-        blurConsts.c_blurDir   = Vector2(0.0f, 1.0f);  // vertical
-        blurConsts.c_texelSize = Vector2(texelW, texelH);
-        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &blurConsts, sizeof(blurConsts));
-
-        m_vertexBuffer->Draw(commandBuffer, renderPass);
-        m_renderer.EndRenderPass(renderPass);
-    }
-
-    //Pass 6: copy original scene to screen
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer);
-
-        Shader* copyToScreen = m_assetManager->GetShader("CopyToScreen");
-        copyToScreen->SetActive(renderPass);
-
-        m_renderTarget->SetActive(renderPass, 0);
-        m_vertexBuffer->Draw(commandBuffer, renderPass);
-
-        m_renderer.EndRenderPass(renderPass);
-    }
-
-    //Pass 7: blend the blurred bloom back to the backbuffer
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer);
-        Shader* copyAdd = m_assetManager->GetShader("CopyAdd");
-        copyAdd->SetActive(renderPass);
-        m_qTarget1->SetActive(renderPass, 0);
-        m_vertexBuffer->Draw(commandBuffer, renderPass);
-        m_renderer.EndRenderPass(renderPass);
-    }
-    //Pass 8: crosshair overlay
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer);
-        Shader* crosshair = m_assetManager->GetShader("Crosshair");
-        crosshair->SetActive(renderPass);
-        CrosshairConstants cc;
-        cc.c_screenSize = Vector2(static_cast<float>(m_renderer.GetScreenWidth()),
-                                  static_cast<float>(m_renderer.GetScreenHeight()));
-        cc._pad[0] = 0.0f;
-        cc._pad[1] = 0.0f;
-        SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cc, sizeof(cc));
-        m_vertexBuffer->Draw(commandBuffer, renderPass);
-        m_renderer.EndRenderPass(renderPass);
-    }
-    //Pass 9: UI overlay
-    if (m_uiCanvas)
-    {
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer);
-        m_uiCanvas->Render(commandBuffer, renderPass, m_assetManager->GetShader("UI"));
-        m_renderer.EndRenderPass(renderPass);
-    }
-    //Pass 10: ImGui editor overlay
+    // ── Final pass: ImGui editor UI over the backbuffer ───────────────────
     if (m_editorLayer)
     {
         m_editorLayer->Prepare(commandBuffer);
-        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer);
-        m_editorLayer->Render(commandBuffer, renderPass);
-        m_renderer.EndRenderPass(renderPass);
+        SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer);
+        m_editorLayer->Render(commandBuffer, pass);
+        m_renderer.EndRenderPass(pass);
     }
-    {   // submit the command buffer
-        m_renderer.EndCommandBuffer(commandBuffer);
-    }
+
+    m_renderer.EndCommandBuffer(commandBuffer);
 }
 
 void Game::ProcessEditorEvent(SDL_Event* event)
 {
     if (m_editorLayer)
         m_editorLayer->ProcessEvent(event);
+}
+
+void Game::SetPlaying(bool playing)
+{
+    m_isPlaying = playing;
+    // Release mouse capture when stopping so ImGui regains control
+    if (!playing)
+        SetMouseCapture(false);
 }
 
 /// Check the current status of a single key on the keyboard
@@ -494,7 +541,7 @@ void Game::SetMouseCapture(bool capture)
 void Game::OnResize(int w, int h)
 {
     // Guard: ignore if called before Init or if size hasn't changed
-    if (!m_renderTarget || !m_camera)
+    if (!m_renderTarget || !m_camera || !m_sceneEditorTarget)
         return;
     if (w == m_renderer.GetScreenWidth() && h == m_renderer.GetScreenHeight())
         return;
@@ -502,13 +549,16 @@ void Game::OnResize(int w, int h)
     // Wait for the GPU to finish all in-flight work before releasing any textures
     SDL_WaitForGPUIdle(m_renderer.GetDevice());
 
-    m_renderTarget->Resize(w,     h);
-    m_halfTarget->Resize(  w / 2, h / 2);
-    m_qTarget1->Resize(    w / 4, h / 4);
-    m_qTarget2->Resize(    w / 4, h / 4);
+    m_sceneEditorTarget->Resize(w,     h);
+    m_gameTarget->Resize(       w,     h);
+    m_renderTarget->Resize(     w,     h);
+    m_halfTarget->Resize(       w / 2, h / 2);
+    m_qTarget1->Resize(         w / 4, h / 4);
+    m_qTarget2->Resize(         w / 4, h / 4);
 
     m_renderer.OnResize(w, h);
     m_camera->SetScreenSize(w, h);
+    m_editorCamera->SetScreenSize(w, h);
 
     if (m_uiCanvas)
         m_uiCanvas->OnResize(w, h);
@@ -601,6 +651,13 @@ bool Game::LoadLevel(const char* fileName)
                 else
                     actor = new Actor(mesh);
                 actor->SetTransform(mat);
+
+                std::string actorName;
+                GetStringFromJSON(objs[i], "name", actorName);
+                if (actorName.empty())
+                    actorName = "Actor_" + std::to_string(m_actors.size());
+                actor->SetName(actorName);
+
                 m_actors.push_back(actor);
                 //loop through and load components
                 const auto& components = objs[i]["components"];
@@ -823,5 +880,47 @@ void Game::LoadShaders()
         crosshairShader->SetBlend(true, SDL_GPU_BLENDFACTOR_SRC_ALPHA, SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA);
         crosshairShader->CreatePipeline(crosshairAttribs, ARRAY_SIZE(crosshairAttribs), sizeof(VertexPosUV));
         m_assetManager->SetShader("Crosshair", crosshairShader);
+    }
+
+    // Game-target variants: same shaders, pipeline points at m_gameTarget (RGBA8)
+    // instead of the backbuffer so the full game pipeline renders into a texture.
+    {
+        SDL_GPUVertexAttribute uvAttribs[] = {
+            { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(VertexPosUV, pos) },
+            { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexPosUV, uv)  }
+        };
+
+        Shader* gameCopy = new Shader(Renderer::Get(), "Shaders/Copy.hlsl");
+        gameCopy->SetZWrite(false); gameCopy->SetZTest(false);
+        gameCopy->SetColorTarget(m_gameTarget);
+        gameCopy->CreatePipeline(uvAttribs, ARRAY_SIZE(uvAttribs), sizeof(VertexPosUV));
+        m_assetManager->SetShader("GameCopy", gameCopy);
+
+        Shader* gameCopyAdd = new Shader(Renderer::Get(), "Shaders/Copy.hlsl");
+        gameCopyAdd->SetZWrite(false); gameCopyAdd->SetZTest(false);
+        gameCopyAdd->SetBlend(true, SDL_GPU_BLENDFACTOR_ONE, SDL_GPU_BLENDFACTOR_ONE);
+        gameCopyAdd->SetColorTarget(m_gameTarget);
+        gameCopyAdd->CreatePipeline(uvAttribs, ARRAY_SIZE(uvAttribs), sizeof(VertexPosUV));
+        m_assetManager->SetShader("GameCopyAdd", gameCopyAdd);
+
+        Shader* gameCrosshair = new Shader(Renderer::Get(), "Shaders/Crosshair.hlsl");
+        gameCrosshair->SetZWrite(false); gameCrosshair->SetZTest(false);
+        gameCrosshair->SetBlend(true, SDL_GPU_BLENDFACTOR_SRC_ALPHA, SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA);
+        gameCrosshair->SetColorTarget(m_gameTarget);
+        gameCrosshair->CreatePipeline(uvAttribs, ARRAY_SIZE(uvAttribs), sizeof(VertexPosUV));
+        m_assetManager->SetShader("GameCrosshair", gameCrosshair);
+    }
+    {
+        SDL_GPUVertexAttribute uiAttribs[] = {
+            { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexUI, pos)   },
+            { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexUI, uv)    },
+            { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(VertexUI, color) }
+        };
+        Shader* gameUI = new Shader(Renderer::Get(), "Shaders/UI.hlsl");
+        gameUI->SetZWrite(false); gameUI->SetZTest(false);
+        gameUI->SetBlend(true, SDL_GPU_BLENDFACTOR_SRC_ALPHA, SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA);
+        gameUI->SetColorTarget(m_gameTarget);
+        gameUI->CreatePipeline(uiAttribs, ARRAY_SIZE(uiAttribs), sizeof(VertexUI));
+        m_assetManager->SetShader("GameUI", gameUI);
     }
 }

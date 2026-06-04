@@ -22,7 +22,7 @@ public:
 private:
     Game* m_game = nullptr;
 
-    bool m_captured = true; // true when the cursor is locked for mouse-look
+    bool m_captured = false; // true when the cursor is locked for mouse-look
     float m_yaw = 0.0f;
     float m_pitch = 0.0f;
     float m_sensitivity = 0.003f;

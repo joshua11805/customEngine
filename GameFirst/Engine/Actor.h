@@ -28,9 +28,13 @@ public:
     void AddComponent(Component* pComponent) { m_components.push_back(pComponent); }
     virtual void Update(float deltaTime);
 
+    void SetName(const std::string& name) { m_name = name; }
+    const std::string& GetName() const { return m_name; }
+
 protected:
     Mesh* m_mesh = nullptr;
     PerObjectConstants m_POC;
+    std::string m_name;
 private:
     std::vector<Component*> m_components;
 };

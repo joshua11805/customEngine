@@ -15,7 +15,8 @@ FPSCamera::FPSCamera(Actor* owner, Game* game)
     Vector3 fwd = mat.GetXAxis();
     m_yaw = atan2f(fwd.y, fwd.x);
 
-    game->SetMouseCapture(true);
+    // Don't capture at construction — editor is visible on startup.
+    // The user clicks into the Scene View in play mode to lock the cursor.
 }
 
 FPSCamera::~FPSCamera()
@@ -33,6 +34,17 @@ void FPSCamera::LoadProperties(const rapidjson::Value& properties)
 
 void FPSCamera::Update(float deltaTime)
 {
+    // If play mode just stopped, ensure we release the cursor
+    if (!m_game->IsPlaying())
+    {
+        if (m_captured)
+        {
+            m_captured = false;
+            m_game->SetMouseCapture(false);
+        }
+        return;
+    }
+
     if (m_captured)
     {
         // Release the cursor on Escape
@@ -45,8 +57,7 @@ void FPSCamera::Update(float deltaTime)
     }
     else
     {
-        // Cursor is free — re-capture when the user clicks back into the window.
-        // Swallow this frame's input so the refocus click neither fires nor jerks the view.
+        // Cursor is free — re-capture when the user left-clicks
         if (m_game->IsMouseButtonJustPressed(SDL_BUTTON_MASK(SDL_BUTTON_LEFT)))
         {
             m_captured = true;
