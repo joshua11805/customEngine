@@ -23,6 +23,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE .)
 target_include_directories(${PROJECT_NAME} PRIVATE ../Engine)
 target_include_directories(${PROJECT_NAME} PRIVATE ../../external/SDL3/include)
 target_include_directories(${PROJECT_NAME} PRIVATE ../../external)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../external/imgui)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../external/imgui/backends)
 
 # Add Engine library
 #add_subdirectory(../Engine build)

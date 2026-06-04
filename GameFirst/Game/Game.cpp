@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Game.h"
 #include "../Engine/UI/UICanvas.h"
+#include "../Engine/Editor/EditorLayer.h"
 #include "../Engine/UI/UIPanel.h"
 #include "../Engine/UI/UIText.h"
 #include "../Engine/UI/Font.h"
@@ -129,6 +130,15 @@ bool Game::Init(int width, int height)
         m_uiFont = nullptr;
     }
 
+    // Editor overlay
+    m_editorLayer = new EditorLayer();
+    if (!m_editorLayer->Init(&m_renderer))
+    {
+        SDL_Log("Game::Init — EditorLayer init failed");
+        delete m_editorLayer;
+        m_editorLayer = nullptr;
+    }
+
     m_ticksCount = SDL_GetTicks();
     return true;
 }
@@ -138,6 +148,8 @@ bool Game::Init(int width, int height)
 void Game::Shutdown()
 {
     JobManager::Get()->End();
+
+    if (m_editorLayer) { m_editorLayer->Shutdown(); delete m_editorLayer; m_editorLayer = nullptr; }
 
     m_fpsText = nullptr; // owned by UICanvas
     if (m_uiCanvas) { m_uiCanvas->Shutdown(); delete m_uiCanvas; m_uiCanvas = nullptr; }
@@ -257,6 +269,13 @@ void Game::UpdateGame()
             SDL_snprintf(buf, sizeof(buf), "FPS: %.0f", 1.0f / deltaTime);
             m_fpsText->SetText(buf);
         }
+
+        if (m_editorLayer)
+        {
+            m_editorLayer->BeginFrame();
+            // panels are built inside BeginFrame for now
+            m_editorLayer->EndFrame();
+        }
     }
     JobManager::Get()->WaitForJobs();
 }
@@ -267,9 +286,7 @@ void Game::RenderFrame()
 {
     PROFILE_SCOPE(RenderFrame);
 
-    // Build and upload UI geometry before acquiring the frame command buffer.
-    // UploadBuffer submits its own command buffer; doing this first guarantees
-    // the vertex data is ready when the UI render pass executes.
+    // Upload UI geometry (submits its own command buffer — must be before BeginCommandBuffer).
     if (m_uiCanvas)
         m_uiCanvas->Prepare();
 
@@ -401,9 +418,23 @@ void Game::RenderFrame()
         m_uiCanvas->Render(commandBuffer, renderPass, m_assetManager->GetShader("UI"));
         m_renderer.EndRenderPass(renderPass);
     }
+    //Pass 10: ImGui editor overlay
+    if (m_editorLayer)
+    {
+        m_editorLayer->Prepare(commandBuffer);
+        SDL_GPURenderPass* renderPass = m_renderer.BeginRenderPass(commandBuffer);
+        m_editorLayer->Render(commandBuffer, renderPass);
+        m_renderer.EndRenderPass(renderPass);
+    }
     {   // submit the command buffer
         m_renderer.EndCommandBuffer(commandBuffer);
     }
+}
+
+void Game::ProcessEditorEvent(SDL_Event* event)
+{
+    if (m_editorLayer)
+        m_editorLayer->ProcessEvent(event);
 }
 
 /// Check the current status of a single key on the keyboard

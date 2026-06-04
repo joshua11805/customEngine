@@ -53,6 +53,7 @@ public:
     SDL_GPURenderPass* BeginRenderPass(SDL_GPUCommandBuffer* commandBuffer, Texture* renderTarget = nullptr);
     void EndRenderPass(SDL_GPURenderPass* renderPass);
     SDL_GPUTextureFormat GetTextureFormat() { return m_textureFormat; }
+    SDL_GPUTextureFormat GetSwapchainFormat() const { return SDL_GetGPUSwapchainTextureFormat(m_device, m_window); }
     SDL_GPUTexture* GetTexture() { return m_depthTexture; }
 
 private:

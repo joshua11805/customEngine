@@ -15,6 +15,7 @@ public:
     void UpdateGame();
     void RenderFrame();
     void OnResize(int w, int h);
+    void ProcessEditorEvent(SDL_Event* event);
 
     // Polling Input Status
     bool IsKeyHeld(int key) const;
@@ -55,6 +56,9 @@ private:
     UICanvas*  m_uiCanvas = nullptr;
     class Font*    m_uiFont   = nullptr;
     class UIText*  m_fpsText  = nullptr;  // non-owning; UICanvas owns it
+
+    // Editor
+    class EditorLayer* m_editorLayer = nullptr;
 
     //render target
     Texture* m_renderTarget = nullptr;
