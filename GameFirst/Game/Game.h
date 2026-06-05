@@ -3,6 +3,7 @@
 #include "EngineMath.h"
 #include "../Engine/TestCube.h"
 #include "../Engine/UI/UICanvas.h"
+#include "../Engine/Editor/EditorLayer.h"  // for SceneViewMode
 #include <vector>
 
 class Actor;
@@ -53,6 +54,7 @@ private:
     bool m_isPlaying = false;
     int m_selectedActor = -1;
     Matrix4 m_sceneCameraMatrix; // written by EditorLayer each frame, used by RenderFrame when not playing
+    SceneViewMode m_sceneViewMode = SceneViewMode::Lit;
 
     // Input
     const bool* m_keyState = nullptr;

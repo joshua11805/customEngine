@@ -15,7 +15,7 @@ SkinnedObj::SkinnedObj(Mesh* mesh) : Actor(mesh)
 
 }
 
-void SkinnedObj::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass)
+void SkinnedObj::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride)
 {
     // upload the skin matrices to vertex shader slot 2
     SDL_PushGPUVertexUniformData(
@@ -29,6 +29,6 @@ void SkinnedObj::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* re
     // per-object constants same as actor
     SDL_PushGPUVertexUniformData(commandBuffer, Renderer::ConstantBuffer_Vertex::CONSTANT_VERTEX_RENDEROBJ, &m_POC,sizeof(m_POC));
     if (m_mesh)
-        m_mesh->Draw(commandBuffer, renderPass);
+        m_mesh->Draw(commandBuffer, renderPass, nullptr); // skinned vertex format is incompatible with scene-view override shaders
 
 }

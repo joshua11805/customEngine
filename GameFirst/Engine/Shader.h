@@ -17,6 +17,8 @@ public:
     void SetZWrite(bool zWrite) { m_zWrite = zWrite; }
     void SetZTest(bool zTest) { m_zTest = zTest; }
     void SetBlend(bool enable, SDL_GPUBlendFactor sourceFactor, SDL_GPUBlendFactor distanceFactor);
+    void SetFillMode(SDL_GPUFillMode fillMode) { m_fillMode = fillMode; }
+    void SetCullMode(SDL_GPUCullMode cullMode) { m_cullMode = cullMode; }
 
 private:
     Renderer* m_renderer = nullptr;
@@ -34,5 +36,7 @@ private:
     bool m_blendEnable = false;
     SDL_GPUBlendFactor m_srcBlendFactor = SDL_GPU_BLENDFACTOR_ONE;
     SDL_GPUBlendFactor m_dstBlendFactor = SDL_GPU_BLENDFACTOR_ZERO;
+    SDL_GPUFillMode    m_fillMode       = SDL_GPU_FILLMODE_FILL;
+    SDL_GPUCullMode    m_cullMode       = SDL_GPU_CULLMODE_BACK;
 
 };

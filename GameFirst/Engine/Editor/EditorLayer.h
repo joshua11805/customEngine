@@ -9,6 +9,17 @@ class Renderer;
 class Actor;
 class Texture;
 
+// Draw mode for the Scene View panel.
+enum class SceneViewMode
+{
+    Lit,              // Phong shading — normal game appearance
+    Unlit,            // Diffuse texture only, no lighting
+    Wireframe,        // LINE fill, no shading
+    WireframeOnShaded,// Lit pass + wireframe overlay in a second sub-pass
+    LightContrib,     // Diffuse lighting accumulation only (no texture)
+    VertexColor,      // Raw vertex COLOR0 channel (needs meshes with vertex colours)
+};
+
 // Per-frame data pushed from Game into the editor each frame.
 // This avoids a circular Engine -> Game header dependency.
 struct EditorFrameData
@@ -22,6 +33,8 @@ struct EditorFrameData
     Matrix4*                   outSceneCamera    = nullptr;
     // Input: Game fills in the current scene view-projection matrix for raycasting.
     Matrix4                    sceneViewProj     = Matrix4::Identity;
+    // I/O: editor reads + writes the current scene draw mode each frame.
+    SceneViewMode*             sceneViewMode     = nullptr;
 };
 
 // Callback so the editor can request state changes in Game without including Game.h
@@ -79,6 +92,7 @@ private:
     bool                       m_isPlaying      = false;
     int*                       m_selectedActor  = nullptr;
     Matrix4*                   m_outSceneCamera = nullptr;
+    SceneViewMode*             m_sceneViewMode  = nullptr;
     EditorCallbacks            m_callbacks      = {};
 
     // Panel visibility toggles

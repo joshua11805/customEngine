@@ -2,6 +2,7 @@
 #include "Renderer.h"
 #include "Mesh.h"
 #include "Material.h"
+#include "Shader.h"
 #include"Component.h"
 
 Actor::Actor(Mesh* mesh)
@@ -62,10 +63,10 @@ void Actor::Update(float deltaTime)
 }
 
 
-void Actor::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass)
+void Actor::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride)
 {
     SDL_PushGPUVertexUniformData(commandBuffer, Renderer::ConstantBuffer_Vertex::CONSTANT_VERTEX_RENDEROBJ, &m_POC,sizeof(m_POC));
     if (m_mesh)
-        m_mesh->Draw(commandBuffer, renderPass);
+        m_mesh->Draw(commandBuffer, renderPass, shaderOverride);
 }
 

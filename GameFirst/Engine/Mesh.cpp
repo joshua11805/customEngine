@@ -6,6 +6,7 @@
 #include "Material.h"
 #include "Profiler.h"
 #include "Renderer.h"
+#include "Shader.h"
 #include "VertexBuffer.h"
 
 // Case-insensitive check for whether 'fileName' ends with 'ext'
@@ -32,15 +33,15 @@ Mesh::~Mesh()
     for (Mesh* sub : m_subMeshes) delete sub;
 }
 
-void Mesh::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass)
+void Mesh::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride)
 {
     if (m_vertexBuffer)
     {
-        m_material->SetActive(commandBuffer, renderPass);
+        m_material->SetActive(commandBuffer, renderPass, shaderOverride);
         m_vertexBuffer->Draw(commandBuffer, renderPass);
     }
     for (Mesh* sub : m_subMeshes)
-        sub->Draw(commandBuffer, renderPass);
+        sub->Draw(commandBuffer, renderPass, shaderOverride);
 }
 
 void Mesh::AddSubMesh(Mesh* sub)

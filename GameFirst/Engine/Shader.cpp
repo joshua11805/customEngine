@@ -93,8 +93,8 @@ bool Shader::CreatePipeline(const SDL_GPUVertexAttribute* vertexAttributes, uint
     pipelineInfo.fragment_shader = m_fragmentShader;
     pipelineInfo.vertex_input_state = vertexInputState;
     pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pipelineInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-    pipelineInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
+    pipelineInfo.rasterizer_state.fill_mode = m_fillMode;
+    pipelineInfo.rasterizer_state.cull_mode = m_cullMode;
     pipelineInfo.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
 pipelineInfo.depth_stencil_state.compare_op = m_zTest ? SDL_GPU_COMPAREOP_LESS : SDL_GPU_COMPAREOP_ALWAYS;
     pipelineInfo.depth_stencil_state.write_mask = 0xFF;

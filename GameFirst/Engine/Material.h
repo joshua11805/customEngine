@@ -30,7 +30,7 @@ public:
     ~Material() = default; //do nothing in destructor
     MaterialConstantsData& GetConstants() { return m_constants; } //getters for data
     const MaterialConstantsData& GetConstants() const { return m_constants; }
-    void SetActive(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass);
+    void SetActive(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride = nullptr);
     void SetShader(Shader* shader) { m_shader = shader; }
     void SetTexture(int slot, const Texture* texture);
     void SetDiffuseColor (const Vector3& diffColor) { m_constants.c_diffuseColor = diffColor; }

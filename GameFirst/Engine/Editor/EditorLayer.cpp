@@ -91,6 +91,7 @@ void EditorLayer::BeginFrame(const EditorFrameData& data, const EditorCallbacks&
     m_selectedActor  = data.selectedActor;
     m_outSceneCamera = data.outSceneCamera;
     m_sceneViewProj  = data.sceneViewProj;
+    m_sceneViewMode  = data.sceneViewMode;
     m_callbacks      = callbacks;
 
     ImGui_ImplSDLGPU3_NewFrame();
@@ -326,49 +327,69 @@ void EditorLayer::DrawSceneView()
     // Toolbar above the scene image (needs window padding for buttons)
     ImGui::Begin("Scene View");
 
-    if (!m_isPlaying)
+    // ── Toolbar: fixed-height row so the image gets the full remaining area ──
     {
-        // Add primitive buttons
-        if (ImGui::Button("+ Cube"))
+        if (m_sceneViewMode)
         {
-            if (m_callbacks.spawnPrimitive)
-            {
-                // Place at screen centre, on ground plane Z=50
-                Vector3 spawnPos(0.f, 0.f, 50.f);
-                float cx = m_sceneViewX + m_sceneViewW * 0.5f;
-                float cy = m_sceneViewY + m_sceneViewH * 0.5f;
-                ScreenToWorldGround(cx, cy, m_sceneViewX, m_sceneViewY,
-                                    m_sceneViewW, m_sceneViewH, 50.f, spawnPos);
-                m_callbacks.spawnPrimitive(m_callbacks.userData, 0, spawnPos);
-            }
+            static const char* k_modeNames[] = {
+                "Lit",
+                "Unlit",
+                "Wireframe",
+                "Wireframe on Shaded",
+                "Light Contribution",
+                "Vertex Color",
+            };
+            int current = static_cast<int>(*m_sceneViewMode);
+            ImGui::SetNextItemWidth(180.f);
+            if (ImGui::Combo("##DrawMode", &current, k_modeNames, IM_ARRAYSIZE(k_modeNames)))
+                *m_sceneViewMode = static_cast<SceneViewMode>(current);
+            ImGui::SameLine();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("+ Sphere"))
+
+        if (!m_isPlaying)
         {
-            if (m_callbacks.spawnPrimitive)
+            if (ImGui::Button("+ Cube"))
             {
-                Vector3 spawnPos(0.f, 0.f, 50.f);
-                float cx = m_sceneViewX + m_sceneViewW * 0.5f;
-                float cy = m_sceneViewY + m_sceneViewH * 0.5f;
-                ScreenToWorldGround(cx, cy, m_sceneViewX, m_sceneViewY,
-                                    m_sceneViewW, m_sceneViewH, 50.f, spawnPos);
-                m_callbacks.spawnPrimitive(m_callbacks.userData, 1, spawnPos);
+                if (m_callbacks.spawnPrimitive)
+                {
+                    Vector3 spawnPos(0.f, 0.f, 50.f);
+                    float cx = m_sceneViewX + m_sceneViewW * 0.5f;
+                    float cy = m_sceneViewY + m_sceneViewH * 0.5f;
+                    ScreenToWorldGround(cx, cy, m_sceneViewX, m_sceneViewY,
+                                        m_sceneViewW, m_sceneViewH, 50.f, spawnPos);
+                    m_callbacks.spawnPrimitive(m_callbacks.userData, 0, spawnPos);
+                }
             }
-        }
-        ImGui::SameLine();
-        if (m_selectedActor && *m_selectedActor >= 0)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.15f, 0.15f, 1.f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 1.f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.40f, 0.10f, 0.10f, 1.f));
-            if (ImGui::Button("Delete Selected") && m_callbacks.removeActor)
+            ImGui::SameLine();
+            if (ImGui::Button("+ Sphere"))
             {
-                m_callbacks.removeActor(m_callbacks.userData, *m_selectedActor);
-                *m_selectedActor = -1;
+                if (m_callbacks.spawnPrimitive)
+                {
+                    Vector3 spawnPos(0.f, 0.f, 50.f);
+                    float cx = m_sceneViewX + m_sceneViewW * 0.5f;
+                    float cy = m_sceneViewY + m_sceneViewH * 0.5f;
+                    ScreenToWorldGround(cx, cy, m_sceneViewX, m_sceneViewY,
+                                        m_sceneViewW, m_sceneViewH, 50.f, spawnPos);
+                    m_callbacks.spawnPrimitive(m_callbacks.userData, 1, spawnPos);
+                }
             }
-            ImGui::PopStyleColor(3);
+            ImGui::SameLine();
+            if (m_selectedActor && *m_selectedActor >= 0)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.15f, 0.15f, 1.f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 1.f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.40f, 0.10f, 0.10f, 1.f));
+                if (ImGui::Button("Delete Selected") && m_callbacks.removeActor)
+                {
+                    m_callbacks.removeActor(m_callbacks.userData, *m_selectedActor);
+                    *m_selectedActor = -1;
+                }
+                ImGui::PopStyleColor(3);
+            }
         }
     }
+    // Separator so the image region starts on a fresh line with full width
+    ImGui::Separator();
 
     bool panelHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_None);
 

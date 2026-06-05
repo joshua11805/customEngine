@@ -323,6 +323,7 @@ void Game::UpdateGame()
             frameData.selectedActor  = &m_selectedActor;
             frameData.outSceneCamera = &m_sceneCameraMatrix;
             frameData.sceneViewProj  = m_editorCamera->GetViewProj();
+            frameData.sceneViewMode  = &m_sceneViewMode;
 
             EditorCallbacks callbacks;
             callbacks.userData      = this;
@@ -363,19 +364,57 @@ void Game::RenderFrame()
 
     // ── Pass 1: Scene editor view (always) ────────────────────────────────
     // Renders actors using the editor camera into m_sceneEditorTarget.
-    // No post-processing — raw lit scene for the Scene View panel.
+    // The shader chosen depends on m_sceneViewMode.
     {
         m_editorCamera->SetWorldToCamera(m_sceneCameraMatrix);
 
-        SDL_GPURenderPass* pass = m_renderer.ClearScreen(
-            commandBuffer, SDL_FColor(0.08f, 0.08f, 0.10f, 1.f), m_sceneEditorTarget);
+        const SDL_FColor clearColor = { 0.08f, 0.08f, 0.10f, 1.f };
 
-        m_editorCamera->SetActive(commandBuffer);
-        m_lighting->SetActive(m_editorCamera, commandBuffer);
-        for (Actor* a : m_actors)
-            a->Draw(commandBuffer, pass);
+        // Pick which scene-target shader to use for the current draw mode.
+        // WireframeOnShaded uses Lit here then adds the wire overlay in sub-pass B.
+        auto PickSceneShader = [&]() -> Shader* {
+            switch (m_sceneViewMode)
+            {
+                case SceneViewMode::Unlit:        return m_assetManager->GetShader("SceneUnlit");
+                case SceneViewMode::Wireframe:    return m_assetManager->GetShader("SceneWire");
+                case SceneViewMode::LightContrib: return m_assetManager->GetShader("SceneLightContrib");
+                case SceneViewMode::VertexColor:
+                    // Uncomment the line below once SceneVertexColor is enabled in LoadShaders
+                    // and your meshes carry a COLOR0 vertex channel:
+                    // return m_assetManager->GetShader("SceneVertexColor");
+                    return m_assetManager->GetShader("SceneUnlit"); // fallback
+                case SceneViewMode::WireframeOnShaded: // lit sub-pass; wire overlay added below
+                case SceneViewMode::Lit:
+                default:                          return m_assetManager->GetShader("SceneLit");
+            }
+        };
 
-        m_renderer.EndRenderPass(pass);
+        // Sub-pass A: main shading pass
+        {
+            SDL_GPURenderPass* pass = m_renderer.ClearScreen(commandBuffer, clearColor, m_sceneEditorTarget);
+            m_editorCamera->SetActive(commandBuffer);
+            m_lighting->SetActive(m_editorCamera, commandBuffer);
+            Shader* sceneShader = PickSceneShader();
+            for (Actor* a : m_actors)
+                a->Draw(commandBuffer, pass, sceneShader);
+            m_renderer.EndRenderPass(pass);
+        }
+
+        // Sub-pass B: wireframe overlay (WireframeOnShaded only).
+        // Additively blended dim lines drawn on top of the lit pass without clearing.
+        if (m_sceneViewMode == SceneViewMode::WireframeOnShaded)
+        {
+            Shader* wireOverlay = m_assetManager->GetShader("SceneWireOverlay");
+            if (wireOverlay)
+            {
+                SDL_GPURenderPass* pass = m_renderer.BeginRenderPass(commandBuffer, m_sceneEditorTarget);
+                m_editorCamera->SetActive(commandBuffer);
+                m_lighting->SetActive(m_editorCamera, commandBuffer);
+                for (Actor* a : m_actors)
+                    a->Draw(commandBuffer, pass, wireOverlay);
+                m_renderer.EndRenderPass(pass);
+            }
+        }
     }
 
     // ── Passes 2-9: Full game pipeline (only when playing) ────────────────
@@ -1097,5 +1136,69 @@ void Game::LoadShaders()
         gameUI->SetColorTarget(m_gameTarget);
         gameUI->CreatePipeline(uiAttribs, ARRAY_SIZE(uiAttribs), sizeof(VertexUI));
         m_assetManager->SetShader("GameUI", gameUI);
+    }
+
+    // ── Scene-view debug shader variants ────────────────────────────────────
+    // All target m_sceneEditorTarget (FLOAT32 RGBA). Selected in RenderFrame
+    // Pass 1 based on m_sceneViewMode.
+    {
+        SDL_GPUVertexAttribute sceneAttribs[] = {
+            { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(VertexPosNormalUV, pos)    },
+            { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(VertexPosNormalUV, normal) },
+            { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexPosNormalUV, uv)     },
+        };
+
+        // Lit — full Phong, targets scene editor RT
+        Shader* sceneLit = new Shader(Renderer::Get(), "Shaders/Phong.hlsl");
+        sceneLit->SetColorTarget(m_sceneEditorTarget);
+        sceneLit->CreatePipeline(sceneAttribs, ARRAY_SIZE(sceneAttribs), sizeof(VertexPosNormalUV));
+        m_assetManager->SetShader("SceneLit", sceneLit);
+
+        // Unlit — diffuse texture only, no lighting
+        Shader* sceneUnlit = new Shader(Renderer::Get(), "Shaders/Unlit.hlsl");
+        sceneUnlit->SetColorTarget(m_sceneEditorTarget);
+        sceneUnlit->CreatePipeline(sceneAttribs, ARRAY_SIZE(sceneAttribs), sizeof(VertexPosNormalUV));
+        m_assetManager->SetShader("SceneUnlit", sceneUnlit);
+
+        // Wireframe — flat grey PS, LINE fill, no culling so back-faces show as wire
+        Shader* sceneWire = new Shader(Renderer::Get(), "Shaders/SceneWire.hlsl");
+        sceneWire->SetColorTarget(m_sceneEditorTarget);
+        sceneWire->SetFillMode(SDL_GPU_FILLMODE_LINE);
+        sceneWire->SetCullMode(SDL_GPU_CULLMODE_NONE);
+        sceneWire->CreatePipeline(sceneAttribs, ARRAY_SIZE(sceneAttribs), sizeof(VertexPosNormalUV));
+        m_assetManager->SetShader("SceneWire", sceneWire);
+
+        // Wireframe-on-Shaded overlay pass — dim grey lines additively blended on top of the Lit pass.
+        // Drawn in a second sub-pass without clearing so the lit surface shows through.
+        Shader* sceneWireOverlay = new Shader(Renderer::Get(), "Shaders/SceneWireOverlay.hlsl");
+        sceneWireOverlay->SetColorTarget(m_sceneEditorTarget);
+        sceneWireOverlay->SetFillMode(SDL_GPU_FILLMODE_LINE);
+        sceneWireOverlay->SetCullMode(SDL_GPU_CULLMODE_NONE);
+        sceneWireOverlay->SetZWrite(false);
+        sceneWireOverlay->SetBlend(true, SDL_GPU_BLENDFACTOR_ONE, SDL_GPU_BLENDFACTOR_ONE);
+        sceneWireOverlay->CreatePipeline(sceneAttribs, ARRAY_SIZE(sceneAttribs), sizeof(VertexPosNormalUV));
+        m_assetManager->SetShader("SceneWireOverlay", sceneWireOverlay);
+
+        // Light Contribution — diffuse lighting only, no texture
+        Shader* sceneLightContrib = new Shader(Renderer::Get(), "Shaders/SceneLightContrib.hlsl");
+        sceneLightContrib->SetColorTarget(m_sceneEditorTarget);
+        sceneLightContrib->CreatePipeline(sceneAttribs, ARRAY_SIZE(sceneAttribs), sizeof(VertexPosNormalUV));
+        m_assetManager->SetShader("SceneLightContrib", sceneLightContrib);
+
+        // Vertex Color — outputs the raw COLOR0 vertex attribute.
+        // IMPORTANT: This shader requires a vertex format that includes a COLOR0 channel.
+        // VertexPosNormalUV (used by most engine meshes) does NOT have vertex colours.
+        // Uncomment the block below once you have meshes / a vertex format with COLOR0.
+        //
+        // SDL_GPUVertexAttribute vcAttribs[] = {
+        //     { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(VertexPosNormalColorUV, pos)    },
+        //     { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(VertexPosNormalColorUV, normal) },
+        //     { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(VertexPosNormalColorUV, color)  },
+        //     { 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexPosNormalColorUV, uv)     },
+        // };
+        // Shader* sceneVertexColor = new Shader(Renderer::Get(), "Shaders/SceneVertexColor.hlsl");
+        // sceneVertexColor->SetColorTarget(m_sceneEditorTarget);
+        // sceneVertexColor->CreatePipeline(vcAttribs, ARRAY_SIZE(vcAttribs), sizeof(VertexPosNormalColorUV));
+        // m_assetManager->SetShader("SceneVertexColor", sceneVertexColor);
     }
 }

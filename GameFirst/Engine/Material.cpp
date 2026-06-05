@@ -70,12 +70,13 @@ bool Material::Load(const char* fileName, AssetManager* pAssetManager)
     return true;
 }
 
-void Material::SetActive(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass)
+void Material::SetActive(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride)
 {
-    //first set shader active
-    if (m_shader)
+    //first set shader active — use override (e.g. scene-view debug shader) if provided
+    Shader* shader = shaderOverride ? shaderOverride : m_shader;
+    if (shader)
     {
-        m_shader->SetActive(renderPass);
+        shader->SetActive(renderPass);
     }
     //then loop through and set all textures active on matching slot
     for (int slot = 0; slot < Renderer::TEXTURE_SLOT_TOTAL; ++slot)

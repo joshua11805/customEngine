@@ -22,7 +22,7 @@ public:
 	};
 	SkinnedObj(Mesh* mesh);
 	friend class Game;
-	void Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass) override;
+	void Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride = nullptr) override;
 
 	SkinConstants m_skinConstants;
 };
