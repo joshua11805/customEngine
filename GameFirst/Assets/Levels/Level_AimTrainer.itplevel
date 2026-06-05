@@ -3,127 +3,179 @@
     "type": "itplevel",
     "version": 3
   },
-
   "camera": {
-    "position": [ 0.0, 0.0, 64.0 ],
-    "rotation": [ 0.0, 0.0, 0.0, 1.0 ]
+    "position": [
+      0.0,
+      0.0,
+      64.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
   },
-
   "lightingData": {
-    "ambient": [ 0.6, 0.6, 0.6 ]
+    "ambient": [
+      0.6000000238418579,
+      0.6000000238418579,
+      0.6000000238418579
+    ]
   },
-
   "actors": [
     {
-      "position": [ 1000.0, 0.0, -10.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        500.0,
+        0.0,
+        -10.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 20.0,
       "mesh": "Assets/Meshes/Platform.itpmesh3",
+      "name": "Actor_0",
       "components": []
     },
-
     {
-      "position": [ 400.0, 0.0, 0.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        400.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 1.0,
       "mesh": "Assets/Meshes/scene.gltf",
+      "name": "Actor_1",
       "components": []
     },
-
     {
-      "position": [ 500.0, -250.0, 100.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        500.0,
+        -250.0,
+        100.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 1.0,
       "mesh": "Assets/Meshes/LightSphere.itpmesh3",
-      "components": [
-        {
-          "type": "TargetMover",
-          "axis": [ 0.0, 1.0, 0.0 ],
-          "angularFreq": 2.0,
-          "amplitude": 150.0,
-          "timeOffset": 0.0
-        }
-      ]
+      "name": "Actor_2",
+      "components": []
     },
-
     {
-      "position": [ 500.0, 0.0, 100.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        500.0,
+        0.0,
+        100.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 1.0,
       "mesh": "Assets/Meshes/LightSphere.itpmesh3",
-      "components": [
-        {
-          "type": "TargetMover",
-          "axis": [ 0.0, 1.0, 0.0 ],
-          "angularFreq": 1.5,
-          "amplitude": 200.0,
-          "timeOffset": 1.0
-        }
-      ]
+      "name": "Actor_3",
+      "components": []
     },
-
     {
-      "position": [ 500.0, 250.0, 100.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        500.0,
+        250.0,
+        100.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 1.0,
       "mesh": "Assets/Meshes/LightSphere.itpmesh3",
-      "components": [
-        {
-          "type": "TargetMover",
-          "axis": [ 0.0, 1.0, 0.0 ],
-          "angularFreq": 1.8,
-          "amplitude": 120.0,
-          "timeOffset": 2.5
-        }
-      ]
+      "name": "Actor_4",
+      "components": []
     },
-
     {
-      "position": [ 800.0, -200.0, 150.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        800.0,
+        -200.0,
+        150.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 1.0,
       "mesh": "Assets/Meshes/LightSphere.itpmesh3",
-      "components": [
-        {
-          "type": "TargetMover",
-          "axis": [ 0.0, 0.0, 1.0 ],
-          "angularFreq": 1.2,
-          "amplitude": 80.0,
-          "timeOffset": 0.8
-        }
-      ]
+      "name": "Actor_5",
+      "components": []
     },
-
     {
-      "position": [ 800.0, 200.0, 150.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        800.0,
+        200.0,
+        150.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 1.0,
       "mesh": "Assets/Meshes/LightSphere.itpmesh3",
-      "components": [
-        {
-          "type": "TargetMover",
-          "axis": [ 0.0, 0.0, 1.0 ],
-          "angularFreq": 1.6,
-          "amplitude": 90.0,
-          "timeOffset": 1.5
-        }
-      ]
+      "name": "Actor_6",
+      "components": []
     },
-
     {
-      "position": [ 700.0, 0.0, 180.0 ],
-      "rotation": [ 0.0, 0.0, 0.0, 1.0 ],
+      "position": [
+        700.0,
+        0.0,
+        180.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "scale": 1.0,
       "mesh": "Assets/Meshes/LightSphere.itpmesh3",
-      "components": [
-        {
-          "type": "TargetMover",
-          "axis": [ 0.0, 1.0, 0.0 ],
-          "angularFreq": 0.9,
-          "amplitude": 220.0,
-          "timeOffset": 3.2
-        }
-      ]
+      "name": "Actor_7",
+      "components": []
+    },
+    {
+      "position": [
+        809.6958618164063,
+        46.81005859375,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": 1.0,
+      "mesh": "C:/Users/User/Documents/GitHub/customEngine/GameFirst\\Assets\\Meshes\\SK_Mannequin.itpmesh3",
+      "name": "SK_Mannequin",
+      "components": []
     }
   ]
 }

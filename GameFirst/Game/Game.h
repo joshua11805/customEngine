@@ -32,6 +32,7 @@ public:
     class Camera* GetCamera() { return m_camera; }
 
     // Editor API
+    void EditorSaveLevel() { SaveLevel(m_currentLevelPath.c_str()); }
     const std::vector<Actor*>& GetActors() const { return m_actors; }
     class Texture* GetSceneEditorTarget() const { return m_sceneEditorTarget; }
     class Texture* GetGameTarget()        const { return m_gameTarget; }
@@ -39,6 +40,11 @@ public:
     void SetPlaying(bool playing);
     int GetSelectedActorIndex() const { return m_selectedActor; }
     void SetSelectedActorIndex(int idx) { m_selectedActor = idx; }
+
+    // Spawn / remove actors at runtime (called by EditorCallbacks)
+    void EditorSpawnPrimitive(int type, Vector3 worldPos); // 0=cube, 1=sphere
+    void EditorSpawnMesh(const char* path, Vector3 worldPos);
+    void EditorRemoveActor(int index);
 
 private:
     Renderer m_renderer;
@@ -61,6 +67,7 @@ private:
 
     //Actors
     std::vector<Actor*> m_actors;
+    std::string m_currentLevelPath; // path last passed to LoadLevel()
 
     Camera* m_camera       = nullptr;  // game / play-mode camera
     Camera* m_editorCamera = nullptr;  // scene-view camera (editor only)
@@ -102,4 +109,5 @@ private:
 
     void LoadShaders();
     bool LoadLevel(const char* fileName);
+    bool SaveLevel(const char* fileName);
 };

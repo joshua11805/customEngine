@@ -15,6 +15,12 @@ add_executable(${PROJECT_NAME} ${SOURCE_FILES}
 # debug define
 target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 
+# Bake the project root into the binary so the editor can locate Assets/ and Game/
+# at runtime regardless of the working directory the exe is launched from.
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
+)
+
 # Precompiled Headers
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.h)
 

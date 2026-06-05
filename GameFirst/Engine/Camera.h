@@ -22,6 +22,10 @@ public:
     void SetWorldToCamera(Matrix4 mat) { m_worldToCamera = mat; }
     const Matrix4& returnWorldToCamera() { return m_worldToCamera; }
     void SetScreenSize(int w, int h);
+    // Computes (and caches) the VP matrix from the current worldToCamera + projection.
+    // Call this before reading GetViewProj() outside of the render pass.
+    void UpdateViewProj() { m_PCC.c_viewProj = m_worldToCamera * m_projectionMatrix; }
+    const Matrix4& GetViewProj() const { return m_PCC.c_viewProj; }
 
 
 private:

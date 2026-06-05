@@ -6,6 +6,8 @@
 #include "../Engine/UI/UIText.h"
 #include "../Engine/UI/Font.h"
 #include "JsonUtil.h"
+#include "rapidjson/prettywriter.h"
+#include "rapidjson/ostreamwrapper.h"
 #include "Mesh.h"
 #include "Profiler.h"
 #include "Shader.h"
@@ -27,6 +29,8 @@
 #include "Components/TargetMover.h"
 #include "SimpleRotate.h"
 #include "VertexBuffer.h"
+#include "../Engine/PrimitiveMesh.h"
+#include <filesystem>
 float rotAng = 1.0f;
 
 Game::Game()
@@ -147,7 +151,7 @@ bool Game::Init(int width, int height)
 
     // Editor overlay
     m_editorLayer = new EditorLayer();
-    if (!m_editorLayer->Init(&m_renderer))
+    if (!m_editorLayer->Init(&m_renderer, PROJECT_ROOT))
     {
         SDL_Log("Game::Init — EditorLayer init failed");
         delete m_editorLayer;
@@ -307,18 +311,35 @@ void Game::UpdateGame()
 
         if (m_editorLayer)
         {
+            // Compute VP for the editor camera so the editor can raycast
+            m_editorCamera->SetWorldToCamera(m_sceneCameraMatrix);
+            m_editorCamera->UpdateViewProj();
+
             EditorFrameData frameData;
-            frameData.actors        = &m_actors;
-            frameData.sceneEditorRT = m_sceneEditorTarget;
-            frameData.gameRT        = m_gameTarget;
-            frameData.isPlaying     = m_isPlaying;
-            frameData.selectedActor = &m_selectedActor;
+            frameData.actors         = &m_actors;
+            frameData.sceneEditorRT  = m_sceneEditorTarget;
+            frameData.gameRT         = m_gameTarget;
+            frameData.isPlaying      = m_isPlaying;
+            frameData.selectedActor  = &m_selectedActor;
             frameData.outSceneCamera = &m_sceneCameraMatrix;
+            frameData.sceneViewProj  = m_editorCamera->GetViewProj();
 
             EditorCallbacks callbacks;
-            callbacks.userData  = this;
-            callbacks.setPlaying = [](void* ud, bool playing) {
+            callbacks.userData      = this;
+            callbacks.setPlaying    = [](void* ud, bool playing) {
                 static_cast<Game*>(ud)->SetPlaying(playing);
+            };
+            callbacks.spawnPrimitive = [](void* ud, int type, Vector3 worldPos) {
+                static_cast<Game*>(ud)->EditorSpawnPrimitive(type, worldPos);
+            };
+            callbacks.spawnMesh = [](void* ud, const char* path, Vector3 worldPos) {
+                static_cast<Game*>(ud)->EditorSpawnMesh(path, worldPos);
+            };
+            callbacks.removeActor = [](void* ud, int index) {
+                static_cast<Game*>(ud)->EditorRemoveActor(index);
+            };
+            callbacks.saveLevel = [](void* ud) {
+                static_cast<Game*>(ud)->EditorSaveLevel();
             };
 
             m_editorLayer->BeginFrame(frameData, callbacks);
@@ -473,7 +494,12 @@ void Game::RenderFrame()
 void Game::ProcessEditorEvent(SDL_Event* event)
 {
     if (m_editorLayer)
+    {
         m_editorLayer->ProcessEvent(event);
+
+        if (event->type == SDL_EVENT_DROP_FILE && event->drop.data)
+            m_editorLayer->NotifyOsFileDrop(event->drop.data);
+    }
 }
 
 void Game::SetPlaying(bool playing)
@@ -570,6 +596,7 @@ void Game::OnResize(int w, int h)
 bool Game::LoadLevel(const char* fileName)
 {
     PROFILE_SCOPE(LoadLevel);
+    m_currentLevelPath = fileName;
 
 	std::ifstream file(fileName);
 	if (!file.is_open())
@@ -651,6 +678,7 @@ bool Game::LoadLevel(const char* fileName)
                 else
                     actor = new Actor(mesh);
                 actor->SetTransform(mat);
+                actor->SetMeshPath(meshFile);
 
                 std::string actorName;
                 GetStringFromJSON(objs[i], "name", actorName);
@@ -727,6 +755,153 @@ bool Game::LoadLevel(const char* fileName)
         }
     }
 	return true;
+}
+
+void Game::EditorSpawnPrimitive(int type, Vector3 worldPos)
+{
+    Mesh* mesh = (type == 0)
+        ? PrimitiveMesh::CreateCube  (m_assetManager, 50.f)
+        : PrimitiveMesh::CreateSphere(m_assetManager, 50.f);
+
+    if (!mesh) return;
+
+    static int s_primCount = 0;
+    std::string name = (type == 0 ? "Cube_" : "Sphere_") + std::to_string(s_primCount++);
+
+    Actor* actor = new Actor(mesh);
+    actor->SetName(name);
+    actor->SetPosition(worldPos);
+    actor->SetScale(Vector3(1.f, 1.f, 1.f));
+    m_actors.push_back(actor);
+    m_selectedActor = static_cast<int>(m_actors.size()) - 1;
+}
+
+void Game::EditorSpawnMesh(const char* path, Vector3 worldPos)
+{
+    Mesh* mesh = m_assetManager->LoadMesh(path);
+    if (!mesh) return;
+
+    std::string name = std::filesystem::path(path).stem().string();
+
+    Actor* actor = nullptr;
+    if (mesh->IsSkinned())
+        actor = new SkinnedObj(mesh);
+    else
+        actor = new Actor(mesh);
+
+    actor->SetName(name);
+    actor->SetMeshPath(path);
+    actor->SetPosition(worldPos);
+    actor->SetScale(Vector3(1.f, 1.f, 1.f));
+    m_actors.push_back(actor);
+    m_selectedActor = static_cast<int>(m_actors.size()) - 1;
+}
+
+void Game::EditorRemoveActor(int index)
+{
+    if (index < 0 || index >= (int)m_actors.size()) return;
+    delete m_actors[index];
+    m_actors.erase(m_actors.begin() + index);
+    if (m_selectedActor >= (int)m_actors.size())
+        m_selectedActor = (int)m_actors.size() - 1;
+}
+
+bool Game::SaveLevel(const char* fileName)
+{
+    if (!fileName || fileName[0] == '\0') return false;
+
+    rapidjson::Document doc;
+    doc.SetObject();
+    auto& alloc = doc.GetAllocator();
+
+    // metadata
+    {
+        rapidjson::Value meta(rapidjson::kObjectType);
+        meta.AddMember("type",    rapidjson::Value("itplevel", alloc), alloc);
+        meta.AddMember("version", 3, alloc);
+        doc.AddMember("metadata", meta, alloc);
+    }
+
+    // camera — preserve original camera block (identity rotation, zero position for now)
+    {
+        rapidjson::Value cam(rapidjson::kObjectType);
+        rapidjson::Value pos(rapidjson::kArrayType);
+        pos.PushBack(0.f, alloc).PushBack(0.f, alloc).PushBack(64.f, alloc);
+        rapidjson::Value rot(rapidjson::kArrayType);
+        rot.PushBack(0.f, alloc).PushBack(0.f, alloc).PushBack(0.f, alloc).PushBack(1.f, alloc);
+        cam.AddMember("position", pos, alloc);
+        cam.AddMember("rotation", rot, alloc);
+        doc.AddMember("camera", cam, alloc);
+    }
+
+    // lightingData — preserve current ambient (hardcoded from original level for now)
+    {
+        rapidjson::Value lighting(rapidjson::kObjectType);
+        rapidjson::Value amb(rapidjson::kArrayType);
+        amb.PushBack(0.6f, alloc).PushBack(0.6f, alloc).PushBack(0.6f, alloc);
+        lighting.AddMember("ambient", amb, alloc);
+        doc.AddMember("lightingData", lighting, alloc);
+    }
+
+    // actors
+    {
+        rapidjson::Value actors(rapidjson::kArrayType);
+
+        for (const Actor* actor : m_actors)
+        {
+            // Skip actors with no mesh path (camera actor, runtime-only, etc.)
+            if (actor->GetMeshPath().empty()) continue;
+
+            rapidjson::Value obj(rapidjson::kObjectType);
+
+            // position
+            Vector3 p = actor->GetPosition();
+            rapidjson::Value posArr(rapidjson::kArrayType);
+            posArr.PushBack(p.x, alloc).PushBack(p.y, alloc).PushBack(p.z, alloc);
+            obj.AddMember("position", posArr, alloc);
+
+            // rotation — convert Euler degrees back to quaternion
+            // Convention matches RebuildMatrix: RotZ(yaw) * RotX(roll) * RotY(pitch)
+            Vector3 deg = actor->GetEulerDeg();
+            Quaternion qx(Vector3(1,0,0), Math::ToRadians(deg.x));
+            Quaternion qy(Vector3(0,1,0), Math::ToRadians(deg.y));
+            Quaternion qz(Vector3(0,0,1), Math::ToRadians(deg.z));
+            Quaternion q = Quaternion::Concatenate(Quaternion::Concatenate(qx, qy), qz);
+            rapidjson::Value rotArr(rapidjson::kArrayType);
+            rotArr.PushBack(q.x, alloc).PushBack(q.y, alloc)
+                  .PushBack(q.z, alloc).PushBack(q.w, alloc);
+            obj.AddMember("rotation", rotArr, alloc);
+
+            // scale — write as uniform float (x component)
+            Vector3 s = actor->GetScale();
+            obj.AddMember("scale", s.x, alloc);
+
+            // mesh path
+            obj.AddMember("mesh", rapidjson::Value(actor->GetMeshPath().c_str(), alloc), alloc);
+
+            // name
+            obj.AddMember("name", rapidjson::Value(actor->GetName().c_str(), alloc), alloc);
+
+            // components — empty for editor-spawned actors; preserve nothing for now
+            obj.AddMember("components", rapidjson::Value(rapidjson::kArrayType), alloc);
+
+            actors.PushBack(obj, alloc);
+        }
+
+        doc.AddMember("actors", actors, alloc);
+    }
+
+    // Write to file with pretty formatting
+    std::ofstream outFile(fileName);
+    if (!outFile.is_open()) return false;
+
+    rapidjson::OStreamWrapper osw(outFile);
+    rapidjson::PrettyWriter<rapidjson::OStreamWrapper> writer(osw);
+    writer.SetIndent(' ', 2);
+    doc.Accept(writer);
+
+    SDL_Log("SaveLevel: wrote %s", fileName);
+    return true;
 }
 
 /// Load all the shaders we will need
