@@ -8,6 +8,8 @@
 class Renderer;
 class Actor;
 class Texture;
+class TerrainManager;
+class TerrainActor;
 
 // Draw mode for the Scene View panel.
 enum class SceneViewMode
@@ -35,6 +37,10 @@ struct EditorFrameData
     Matrix4                    sceneViewProj     = Matrix4::Identity;
     // I/O: editor reads + writes the current scene draw mode each frame.
     SceneViewMode*             sceneViewMode     = nullptr;
+    // Terrain manager — editor panel reads/writes terrain params and enable state.
+    TerrainManager*            terrainManager    = nullptr;
+    // Placed terrain actor — non-null when a TerrainActor has been spawned into the level.
+    TerrainActor*              terrainActor      = nullptr;
 };
 
 // Callback so the editor can request state changes in Game without including Game.h
@@ -46,6 +52,8 @@ struct EditorCallbacks
     void (*spawnMesh)(void* ud, const char* path, Vector3 worldPos) = nullptr;
     void (*removeActor)(void* ud, int index)                        = nullptr;
     void (*saveLevel)(void* ud)                                     = nullptr;
+    // Spawns a single terrain chunk as a scene Actor using current TerrainManager params.
+    void (*spawnTerrain)(void* ud)                                  = nullptr;
 };
 
 // Owns the Dear ImGui lifetime and all editor panels.
@@ -79,6 +87,7 @@ private:
     void DrawHierarchy();
     void DrawInspector();
     void DrawProjectView();
+    void DrawTerrainPanel();
 
     // Project view helpers
     void DrawDirectoryNode(const std::filesystem::path& path);
@@ -93,6 +102,8 @@ private:
     int*                       m_selectedActor  = nullptr;
     Matrix4*                   m_outSceneCamera = nullptr;
     SceneViewMode*             m_sceneViewMode  = nullptr;
+    TerrainManager*            m_terrainManager = nullptr;
+    TerrainActor*              m_terrainActor   = nullptr;
     EditorCallbacks            m_callbacks      = {};
 
     // Panel visibility toggles
@@ -101,6 +112,7 @@ private:
     bool m_showGameView     = true;
     bool m_showInspector    = true;
     bool m_showProjectView  = true;
+    bool m_showTerrainPanel = true;
 
     // Project view state
     std::filesystem::path m_projectRoot;       // set from Game via Init

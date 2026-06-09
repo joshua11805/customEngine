@@ -23,6 +23,17 @@ public:
 	SkinnedObj(Mesh* mesh);
 	friend class Game;
 	void Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride = nullptr) override;
+	Shader* PickSceneShader(int mode) override;
+
+	// Scene-pass shaders (set by Game::LoadShaders via SetSceneShaders).
+	// These target m_sceneEditorTarget and use the skinned vertex format.
+	void SetSceneShaders(Shader* lit, Shader* wire, Shader* wireOverlay)
+		{ m_sceneLit = lit; m_sceneWire = wire; m_sceneWireOverlay = wireOverlay; }
 
 	SkinConstants m_skinConstants;
+
+private:
+	Shader* m_sceneLit         = nullptr; // non-owning
+	Shader* m_sceneWire        = nullptr; // non-owning
+	Shader* m_sceneWireOverlay = nullptr; // non-owning
 };

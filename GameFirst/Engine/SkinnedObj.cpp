@@ -1,9 +1,11 @@
 //
 // Created by JoshuaShin on 3/19/26.
 //
+#include "pch.h"
 #include "SkinnedObj.h"
 #include "Mesh.h"
 #include "Actor.h"
+#include "Shader.h"
 
 SkinnedObj::SkinnedObj(Mesh* mesh) : Actor(mesh)
 {
@@ -15,9 +17,19 @@ SkinnedObj::SkinnedObj(Mesh* mesh) : Actor(mesh)
 
 }
 
+Shader* SkinnedObj::PickSceneShader(int mode)
+{
+    // SceneViewMode values (mirrored here to avoid EditorLayer.h dependency):
+    // 0=Lit, 1=Unlit, 2=Wireframe, 3=WireframeOnShaded, 4=LightContrib, 5=VertexColor
+    switch (mode)
+    {
+        case 2: return m_sceneWire;   // Wireframe
+        default: return m_sceneLit;   // Lit, Unlit, WireframeOnShaded (lit sub-pass), LightContrib
+    }
+}
+
 void SkinnedObj::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride)
 {
-    // upload the skin matrices to vertex shader slot 2
     SDL_PushGPUVertexUniformData(
         commandBuffer,
         Renderer::ConstantBuffer_Vertex::CONSTANT_VERTEX_SKINNING,
@@ -25,10 +37,7 @@ void SkinnedObj::Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* re
         sizeof(m_skinConstants)
     );
 
-    //not sure if we're supposed to do Actor::Draw(), so made m_POC protected and copying code from the func
-    // per-object constants same as actor
-    SDL_PushGPUVertexUniformData(commandBuffer, Renderer::ConstantBuffer_Vertex::CONSTANT_VERTEX_RENDEROBJ, &m_POC,sizeof(m_POC));
+    SDL_PushGPUVertexUniformData(commandBuffer, Renderer::ConstantBuffer_Vertex::CONSTANT_VERTEX_RENDEROBJ, &m_POC, sizeof(m_POC));
     if (m_mesh)
-        m_mesh->Draw(commandBuffer, renderPass, nullptr); // skinned vertex format is incompatible with scene-view override shaders
-
+        m_mesh->Draw(commandBuffer, renderPass, shaderOverride);
 }

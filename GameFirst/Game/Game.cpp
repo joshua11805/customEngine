@@ -30,6 +30,8 @@
 #include "SimpleRotate.h"
 #include "VertexBuffer.h"
 #include "../Engine/PrimitiveMesh.h"
+#include "../Engine/TerrainManager.h"
+#include "../Engine/TerrainActor.h"
 #include <filesystem>
 float rotAng = 1.0f;
 
@@ -149,6 +151,9 @@ bool Game::Init(int width, int height)
         m_uiFont = nullptr;
     }
 
+    // Terrain manager (disabled until the editor panel enables it)
+    m_terrainManager = new TerrainManager();
+
     // Editor overlay
     m_editorLayer = new EditorLayer();
     if (!m_editorLayer->Init(&m_renderer, PROJECT_ROOT))
@@ -181,6 +186,8 @@ void Game::Shutdown()
     JobManager::Get()->End();
 
     if (m_editorLayer) { m_editorLayer->Shutdown(); delete m_editorLayer; m_editorLayer = nullptr; }
+
+    delete m_terrainManager; m_terrainManager = nullptr;
 
     m_fpsText = nullptr; // owned by UICanvas
     if (m_uiCanvas) { m_uiCanvas->Shutdown(); delete m_uiCanvas; m_uiCanvas = nullptr; }
@@ -293,6 +300,28 @@ void Game::UpdateGame()
             deltaTime = 0.033f;
         }
 
+        // Update terrain streaming — preview manager (editor) and any spawned TerrainActor.
+        // m_sceneCameraMatrix / returnWorldToCamera() are world-to-camera matrices;
+        // invert to get camera-to-world, then read the translation as world position.
+        {
+            Matrix4 camToWorld = m_isPlaying
+                ? m_camera->returnWorldToCamera()
+                : m_sceneCameraMatrix;
+            camToWorld.Invert();
+            Vector3 camPos = camToWorld.GetTranslation();
+
+            // Preview streaming (editor panel "Enable Terrain" checkbox)
+            if (m_terrainManager)
+                m_terrainManager->Update(camPos);
+
+            // Placed terrain actors in the level stream independently
+            for (Actor* a : m_actors)
+            {
+                if (TerrainActor* ta = dynamic_cast<TerrainActor*>(a))
+                    ta->UpdateStreaming(camPos);
+            }
+        }
+
         if (m_isPlaying)
         {
             for (Actor* actor : m_actors)
@@ -324,6 +353,8 @@ void Game::UpdateGame()
             frameData.outSceneCamera = &m_sceneCameraMatrix;
             frameData.sceneViewProj  = m_editorCamera->GetViewProj();
             frameData.sceneViewMode  = &m_sceneViewMode;
+            frameData.terrainManager = m_terrainManager;
+            frameData.terrainActor   = m_terrainActor;
 
             EditorCallbacks callbacks;
             callbacks.userData      = this;
@@ -341,6 +372,9 @@ void Game::UpdateGame()
             };
             callbacks.saveLevel = [](void* ud) {
                 static_cast<Game*>(ud)->EditorSaveLevel();
+            };
+            callbacks.spawnTerrain = [](void* ud) {
+                static_cast<Game*>(ud)->EditorSpawnTerrain();
             };
 
             m_editorLayer->BeginFrame(frameData, callbacks);
@@ -395,8 +429,22 @@ void Game::RenderFrame()
             m_editorCamera->SetActive(commandBuffer);
             m_lighting->SetActive(m_editorCamera, commandBuffer);
             Shader* sceneShader = PickSceneShader();
+            int sceneMode = static_cast<int>(m_sceneViewMode);
+            TerrainChunk::SetGamePass(false);
             for (Actor* a : m_actors)
-                a->Draw(commandBuffer, pass, sceneShader);
+            {
+                Shader* s = a->PickSceneShader(sceneMode);
+                a->Draw(commandBuffer, pass, s ? s : sceneShader);
+            }
+            // Streaming terrain — pick scene-mode-appropriate shader
+            if (m_terrainManager)
+            {
+                bool isWire = (m_sceneViewMode == SceneViewMode::Wireframe ||
+                               m_sceneViewMode == SceneViewMode::WireframeOnShaded);
+                Shader* terrainShader = m_assetManager->GetShader(
+                    isWire ? "SceneWire_Terrain" : "Terrain");
+                m_terrainManager->Draw(commandBuffer, pass, terrainShader);
+            }
             m_renderer.EndRenderPass(pass);
         }
 
@@ -411,7 +459,15 @@ void Game::RenderFrame()
                 m_editorCamera->SetActive(commandBuffer);
                 m_lighting->SetActive(m_editorCamera, commandBuffer);
                 for (Actor* a : m_actors)
-                    a->Draw(commandBuffer, pass, wireOverlay);
+                {
+                    // Overlay sub-pass always needs wire lines — use the Wireframe mode shader.
+                    Shader* s = a->PickSceneShader(static_cast<int>(SceneViewMode::Wireframe));
+                    a->Draw(commandBuffer, pass, s ? s : wireOverlay);
+                }
+                // Streaming terrain wireframe overlay
+                if (m_terrainManager)
+                    m_terrainManager->Draw(commandBuffer, pass,
+                        m_assetManager->GetShader("SceneWire_Terrain"));
                 m_renderer.EndRenderPass(pass);
             }
         }
@@ -429,8 +485,12 @@ void Game::RenderFrame()
 
             m_camera->SetActive(commandBuffer);
             m_lighting->SetActive(m_camera, commandBuffer);
+            TerrainChunk::SetGamePass(true);
             for (Actor* a : m_actors)
                 a->Draw(commandBuffer, pass);
+            if (m_terrainManager)
+                m_terrainManager->Draw(commandBuffer, pass);
+            TerrainChunk::SetGamePass(false);
 
             m_renderer.EndRenderPass(pass);
         }
@@ -694,14 +754,52 @@ bool Game::LoadLevel(const char* fileName)
     {
         for (rapidjson::SizeType i = 0; i < objs.Size(); i++)
         {
-            if (objs[i].IsObject())
+            if (!objs[i].IsObject()) continue;
+
+            // Terrain actor — special type with GenParams instead of a mesh path
+            std::string actorType;
+            GetStringFromJSON(objs[i], "type", actorType);
+            if (actorType == "terrain")
             {
-                Vector3 position;
-                Quaternion rotation;
-                float scale = 1.0f;
-                GetVectorFromJSON(objs[i], "position", position);
-                GetQuaternionFromJSON(objs[i], "rotation", rotation);
-                GetFloatFromJSON(objs[i], "scale", scale);
+                TerrainActor* ta = new TerrainActor();
+                std::string terrainName;
+                GetStringFromJSON(objs[i], "name", terrainName);
+                if (!terrainName.empty()) ta->SetName(terrainName);
+
+                TerrainChunk::GenParams p;
+                if (objs[i].HasMember("resolution"))  p.resolution  = objs[i]["resolution"].GetInt();
+                if (objs[i].HasMember("tileSize"))     p.tileSize    = objs[i]["tileSize"].GetFloat();
+                if (objs[i].HasMember("heightScale"))  p.heightScale = objs[i]["heightScale"].GetFloat();
+                if (objs[i].HasMember("noiseScale"))   p.noiseScale  = objs[i]["noiseScale"].GetFloat();
+                if (objs[i].HasMember("octaves"))      p.octaves     = objs[i]["octaves"].GetInt();
+                if (objs[i].HasMember("persistence"))  p.persistence = objs[i]["persistence"].GetFloat();
+                if (objs[i].HasMember("lacunarity"))   p.lacunarity  = objs[i]["lacunarity"].GetFloat();
+                if (objs[i].HasMember("seed"))         p.seed        = objs[i]["seed"].GetInt();
+                ta->SetParams(p);
+
+                int loadRadius = 2;
+                if (objs[i].HasMember("loadRadius"))   loadRadius = objs[i]["loadRadius"].GetInt();
+                ta->GetManager()->SetLoadRadius(loadRadius);
+                ta->GetManager()->SetEnabled(true);
+
+                ta->SetShaders(
+                    m_assetManager->GetShader("Terrain"),
+                    m_assetManager->GetShader("TerrainGame"),
+                    m_assetManager->GetShader("SceneWire_Terrain")
+                );
+
+                m_terrainActor = ta;
+                m_actors.push_back(ta);
+                continue;
+            }
+
+            {
+            Vector3 position;
+            Quaternion rotation;
+            float scale = 1.0f;
+            GetVectorFromJSON(objs[i], "position", position);
+            GetQuaternionFromJSON(objs[i], "rotation", rotation);
+            GetFloatFromJSON(objs[i], "scale", scale);
                 //create mat
                 Matrix4 mat = Matrix4::CreateScale(scale)
                 * Matrix4::CreateFromQuaternion(rotation)
@@ -713,7 +811,15 @@ bool Game::LoadLevel(const char* fileName)
 
                 Actor* actor = nullptr;
                 if (mesh && mesh->IsSkinned())
-                    actor = new SkinnedObj(mesh);
+                {
+                    SkinnedObj* sk = new SkinnedObj(mesh);
+                    sk->SetSceneShaders(
+                        m_assetManager->GetShader("SceneLit_Skinned"),
+                        m_assetManager->GetShader("SceneWire_Skinned"),
+                        m_assetManager->GetShader("SceneWire_Skinned")
+                    );
+                    actor = sk;
+                }
                 else
                     actor = new Actor(mesh);
                 actor->SetTransform(mat);
@@ -824,7 +930,15 @@ void Game::EditorSpawnMesh(const char* path, Vector3 worldPos)
 
     Actor* actor = nullptr;
     if (mesh->IsSkinned())
-        actor = new SkinnedObj(mesh);
+    {
+        SkinnedObj* sk = new SkinnedObj(mesh);
+        sk->SetSceneShaders(
+            m_assetManager->GetShader("SceneLit_Skinned"),
+            m_assetManager->GetShader("SceneWire_Skinned"),
+            m_assetManager->GetShader("SceneWire_Skinned") // wire overlay reuses wire shader
+        );
+        actor = sk;
+    }
     else
         actor = new Actor(mesh);
 
@@ -839,10 +953,51 @@ void Game::EditorSpawnMesh(const char* path, Vector3 worldPos)
 void Game::EditorRemoveActor(int index)
 {
     if (index < 0 || index >= (int)m_actors.size()) return;
+    if (m_actors[index] == m_terrainActor)
+        m_terrainActor = nullptr;
     delete m_actors[index];
     m_actors.erase(m_actors.begin() + index);
     if (m_selectedActor >= (int)m_actors.size())
         m_selectedActor = (int)m_actors.size() - 1;
+}
+
+void Game::EditorSpawnTerrain()
+{
+    if (!m_terrainManager) return;
+
+    // Only one TerrainActor is allowed in the level at a time.
+    // If one already exists, just select it.
+    if (m_terrainActor)
+    {
+        for (int i = 0; i < (int)m_actors.size(); ++i)
+        {
+            if (m_actors[i] == m_terrainActor)
+            {
+                m_selectedActor = i;
+                break;
+            }
+        }
+        return;
+    }
+
+    TerrainActor* ta = new TerrainActor();
+    ta->SetParams(m_terrainManager->GetParams());
+    ta->SetShaders(
+        m_assetManager->GetShader("Terrain"),
+        m_assetManager->GetShader("TerrainGame"),
+        m_assetManager->GetShader("SceneWire_Terrain")
+    );
+    // Copy load radius from preview manager
+    ta->GetManager()->SetLoadRadius(m_terrainManager->GetLoadRadius());
+    ta->GetManager()->SetEnabled(true);
+
+    m_terrainActor = ta;
+    m_actors.push_back(ta);
+    m_selectedActor = static_cast<int>(m_actors.size()) - 1;
+
+    // Disable preview streaming so it doesn't render on top of the actor.
+    m_terrainManager->SetEnabled(false);
+    m_terrainManager->UnloadAll();
 }
 
 bool Game::SaveLevel(const char* fileName)
@@ -888,6 +1043,26 @@ bool Game::SaveLevel(const char* fileName)
 
         for (const Actor* actor : m_actors)
         {
+            // TerrainActor serialises as a special terrain entry (no mesh path)
+            if (const TerrainActor* ta = dynamic_cast<const TerrainActor*>(actor))
+            {
+                const TerrainChunk::GenParams& p = ta->GetParams();
+                rapidjson::Value obj(rapidjson::kObjectType);
+                obj.AddMember("type", rapidjson::Value("terrain", alloc), alloc);
+                obj.AddMember("name", rapidjson::Value(ta->GetName().c_str(), alloc), alloc);
+                obj.AddMember("loadRadius",  ta->GetManager()->GetLoadRadius(), alloc);
+                obj.AddMember("resolution",  p.resolution,  alloc);
+                obj.AddMember("tileSize",    p.tileSize,    alloc);
+                obj.AddMember("heightScale", p.heightScale, alloc);
+                obj.AddMember("noiseScale",  p.noiseScale,  alloc);
+                obj.AddMember("octaves",     p.octaves,     alloc);
+                obj.AddMember("persistence", p.persistence, alloc);
+                obj.AddMember("lacunarity",  p.lacunarity,  alloc);
+                obj.AddMember("seed",        p.seed,        alloc);
+                actors.PushBack(obj, alloc);
+                continue;
+            }
+
             // Skip actors with no mesh path (camera actor, runtime-only, etc.)
             if (actor->GetMeshPath().empty()) continue;
 
@@ -980,6 +1155,20 @@ void Game::LoadShaders()
         skinnedShader->SetColorTarget(m_renderTarget);
         skinnedShader->CreatePipeline(skinnedAttribs, ARRAY_SIZE(skinnedAttribs), sizeof(SkinnedVertex));
         m_assetManager->SetShader("Skinned", skinnedShader);
+
+        // Scene-view variants of the skinned shader (target m_sceneEditorTarget).
+        // Used by SkinnedObj::PickSceneShader so the correct vertex format is bound.
+        Shader* sceneLitSkinned = new Shader(Renderer::Get(), "Shaders/SceneLit_Skinned.hlsl");
+        sceneLitSkinned->SetColorTarget(m_sceneEditorTarget);
+        sceneLitSkinned->CreatePipeline(skinnedAttribs, ARRAY_SIZE(skinnedAttribs), sizeof(SkinnedVertex));
+        m_assetManager->SetShader("SceneLit_Skinned", sceneLitSkinned);
+
+        Shader* sceneWireSkinned = new Shader(Renderer::Get(), "Shaders/SceneWire_Skinned.hlsl");
+        sceneWireSkinned->SetColorTarget(m_sceneEditorTarget);
+        sceneWireSkinned->SetFillMode(SDL_GPU_FILLMODE_LINE);
+        sceneWireSkinned->SetCullMode(SDL_GPU_CULLMODE_NONE);
+        sceneWireSkinned->CreatePipeline(skinnedAttribs, ARRAY_SIZE(skinnedAttribs), sizeof(SkinnedVertex));
+        m_assetManager->SetShader("SceneWire_Skinned", sceneWireSkinned);
 
         //skinned shader
         Shader* normalShader = new Shader(Renderer::Get(), "Shaders/Normal.hlsl");
@@ -1136,6 +1325,44 @@ void Game::LoadShaders()
         gameUI->SetColorTarget(m_gameTarget);
         gameUI->CreatePipeline(uiAttribs, ARRAY_SIZE(uiAttribs), sizeof(VertexUI));
         m_assetManager->SetShader("GameUI", gameUI);
+    }
+
+    // ── Terrain shader ───────────────────────────────────────────────────────
+    // Two pipeline instances: one targeting the scene editor RT (FLOAT32),
+    // one targeting the game intermediate RT (FLOAT32). Same HLSL, different target.
+    {
+        SDL_GPUVertexAttribute terrainAttribs[] = {
+            { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(VertexPosNormalColorUV, pos)    },
+            { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(VertexPosNormalColorUV, normal) },
+            { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offsetof(VertexPosNormalColorUV, color)  },
+            { 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(VertexPosNormalColorUV, uv)     },
+        };
+
+        // Scene editor view variant
+        Shader* terrainScene = new Shader(Renderer::Get(), "Shaders/Terrain.hlsl");
+        terrainScene->SetColorTarget(m_sceneEditorTarget);
+        terrainScene->SetCullMode(SDL_GPU_CULLMODE_NONE);
+        terrainScene->CreatePipeline(terrainAttribs, ARRAY_SIZE(terrainAttribs), sizeof(VertexPosNormalColorUV));
+        m_assetManager->SetShader("Terrain", terrainScene);
+
+        // Game pipeline variant
+        Shader* terrainGame = new Shader(Renderer::Get(), "Shaders/Terrain.hlsl");
+        terrainGame->SetColorTarget(m_renderTarget);
+        terrainGame->SetCullMode(SDL_GPU_CULLMODE_NONE);
+        terrainGame->CreatePipeline(terrainAttribs, ARRAY_SIZE(terrainAttribs), sizeof(VertexPosNormalColorUV));
+        m_assetManager->SetShader("TerrainGame", terrainGame);
+
+        // Wireframe variant for scene-view debug mode (LINE fill, targets scene RT)
+        Shader* terrainWire = new Shader(Renderer::Get(), "Shaders/SceneWire_Terrain.hlsl");
+        terrainWire->SetColorTarget(m_sceneEditorTarget);
+        terrainWire->SetFillMode(SDL_GPU_FILLMODE_LINE);
+        terrainWire->SetCullMode(SDL_GPU_CULLMODE_NONE);
+        terrainWire->CreatePipeline(terrainAttribs, ARRAY_SIZE(terrainAttribs), sizeof(VertexPosNormalColorUV));
+        m_assetManager->SetShader("SceneWire_Terrain", terrainWire);
+
+        // Give the terrain manager its shaders so streaming chunks render correctly.
+        if (m_terrainManager)
+            m_terrainManager->SetShaders(terrainScene, terrainGame, terrainWire);
     }
 
     // ── Scene-view debug shader variants ────────────────────────────────────

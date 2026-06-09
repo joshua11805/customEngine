@@ -21,6 +21,13 @@ public:
     Actor(Mesh* mesh);
     virtual ~Actor();
     virtual void Draw(SDL_GPUCommandBuffer* commandBuffer, SDL_GPURenderPass* renderPass, Shader* shaderOverride = nullptr);
+
+    // Override in subclasses that have a vertex format incompatible with the generic
+    // scene-view shaders (e.g. SkinnedObj, TerrainChunk).  The render loop calls this
+    // before passing sceneShader so each actor can substitute its own compatible pipeline.
+    // mode matches SceneViewMode enum values; return nullptr to use the default sceneShader.
+    virtual Shader* PickSceneShader(int /*mode*/) { return nullptr; }
+
     PerObjectConstants GetWorldMat() { return m_POC; }
     void SetWorldMat(Matrix4 mat) { m_POC.c_modelToWorld = mat; SyncDecomposed(); }
     void SetTransform(Matrix4 mat) { m_POC.c_modelToWorld = mat; SyncDecomposed(); }

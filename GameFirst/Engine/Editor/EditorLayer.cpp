@@ -4,6 +4,8 @@
 #include "../Texture.h"
 #include "../Actor.h"
 #include "../EngineMath.h"
+#include "../TerrainManager.h"
+#include "../TerrainActor.h"
 
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
@@ -92,6 +94,8 @@ void EditorLayer::BeginFrame(const EditorFrameData& data, const EditorCallbacks&
     m_outSceneCamera = data.outSceneCamera;
     m_sceneViewProj  = data.sceneViewProj;
     m_sceneViewMode  = data.sceneViewMode;
+    m_terrainManager = data.terrainManager;
+    m_terrainActor   = data.terrainActor;
     m_callbacks      = callbacks;
 
     ImGui_ImplSDLGPU3_NewFrame();
@@ -167,11 +171,12 @@ void EditorLayer::BeginFrame(const EditorFrameData& data, const EditorCallbacks&
 
     ImGui::End();
 
-    if (m_showHierarchy)   DrawHierarchy();
-    if (m_showSceneView)   DrawSceneView();
-    if (m_showGameView)    DrawGameView();
-    if (m_showInspector)   DrawInspector();
-    if (m_showProjectView) DrawProjectView();
+    if (m_showHierarchy)    DrawHierarchy();
+    if (m_showSceneView)    DrawSceneView();
+    if (m_showGameView)     DrawGameView();
+    if (m_showInspector)    DrawInspector();
+    if (m_showProjectView)  DrawProjectView();
+    if (m_showTerrainPanel) DrawTerrainPanel();
 }
 
 void EditorLayer::EndFrame()
@@ -245,6 +250,7 @@ void EditorLayer::DrawMainMenuBar()
         ImGui::MenuItem("Hierarchy",    nullptr, &m_showHierarchy);
         ImGui::MenuItem("Inspector",    nullptr, &m_showInspector);
         ImGui::MenuItem("Project",      nullptr, &m_showProjectView);
+        ImGui::MenuItem("Terrain",      nullptr, &m_showTerrainPanel);
         ImGui::EndMenu();
     }
 
@@ -381,6 +387,8 @@ void EditorLayer::DrawSceneView()
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.40f, 0.10f, 0.10f, 1.f));
                 if (ImGui::Button("Delete Selected") && m_callbacks.removeActor)
                 {
+                    Actor* sel = (*m_actors)[*m_selectedActor];
+                    if (sel == m_terrainActor) m_terrainActor = nullptr;
                     m_callbacks.removeActor(m_callbacks.userData, *m_selectedActor);
                     *m_selectedActor = -1;
                 }
@@ -617,6 +625,7 @@ void EditorLayer::DrawHierarchy()
             if (ImGui::IsItemClicked())
                 *m_selectedActor = i;
         }
+
     }
 
     ImGui::End();
@@ -667,6 +676,7 @@ void EditorLayer::DrawInspector()
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.50f, 0.10f, 0.10f, 1.f));
     if (ImGui::Button("Delete Actor", ImVec2(-1, 0)) && m_callbacks.removeActor)
     {
+        if (actor == m_terrainActor) m_terrainActor = nullptr;
         m_callbacks.removeActor(m_callbacks.userData, *m_selectedActor);
         *m_selectedActor = -1;
     }
@@ -965,6 +975,115 @@ void EditorLayer::DrawProjectView()
 
         ImGui::EndPopup();
     }
+
+    ImGui::End();
+}
+
+void EditorLayer::DrawTerrainPanel()
+{
+    ImGui::Begin("Terrain");
+
+    if (!m_terrainManager)
+    {
+        ImGui::TextDisabled("No terrain manager available.");
+        ImGui::End();
+        return;
+    }
+
+    // ── If a TerrainActor is placed in the level, show its settings ─────────
+    if (m_terrainActor)
+    {
+        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.f), "Active in level: Terrain");
+        ImGui::Separator();
+
+        TerrainChunk::GenParams params = m_terrainActor->GetParams();
+        bool dirty = false;
+
+        if (ImGui::CollapsingHeader("Mesh##ta", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            dirty |= ImGui::SliderInt("Resolution##ta",    &params.resolution,   8, 256);
+            dirty |= ImGui::SliderFloat("Tile Size##ta",   &params.tileSize,     50.f, 2000.f);
+            dirty |= ImGui::SliderFloat("Height Scale##ta",&params.heightScale,  10.f, 2000.f);
+        }
+        if (ImGui::CollapsingHeader("Noise##ta", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            dirty |= ImGui::SliderFloat("Frequency##ta",   &params.noiseScale,  0.0001f, 0.02f, "%.5f");
+            dirty |= ImGui::SliderInt("Octaves##ta",       &params.octaves,     1, 10);
+            dirty |= ImGui::SliderFloat("Persistence##ta", &params.persistence, 0.1f, 1.0f);
+            dirty |= ImGui::SliderFloat("Lacunarity##ta",  &params.lacunarity,  1.0f, 4.0f);
+            dirty |= ImGui::InputInt("Seed##ta",           &params.seed);
+        }
+        if (ImGui::CollapsingHeader("Streaming##ta", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            int radius = m_terrainActor->GetManager()->GetLoadRadius();
+            if (ImGui::SliderInt("Load Radius (chunks)##ta", &radius, 0, 8))
+                m_terrainActor->GetManager()->SetLoadRadius(radius);
+            int total = (radius * 2 + 1) * (radius * 2 + 1);
+            ImGui::TextDisabled("Max loaded: %d x %d = %d chunks", radius*2+1, radius*2+1, total);
+        }
+
+        if (dirty)
+            m_terrainActor->GetManager()->Regenerate(params);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("Select 'Terrain' in the Hierarchy to move it.");
+        ImGui::End();
+        return;
+    }
+
+    // ── No placed terrain yet — show preview controls ────────────────────────
+    bool enabled = m_terrainManager->IsEnabled();
+    if (ImGui::Checkbox("Enable Terrain", &enabled))
+    {
+        m_terrainManager->SetEnabled(enabled);
+        if (!enabled)
+            m_terrainManager->UnloadAll();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(preview in scene view)");
+
+    ImGui::Separator();
+
+    TerrainChunk::GenParams params = m_terrainManager->GetParams();
+    bool dirty = false;
+
+    if (ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        dirty |= ImGui::SliderInt("Resolution",    &params.resolution,   8, 256);
+        dirty |= ImGui::SliderFloat("Tile Size",   &params.tileSize,     50.f, 2000.f);
+        dirty |= ImGui::SliderFloat("Height Scale",&params.heightScale,  10.f, 2000.f);
+    }
+
+    if (ImGui::CollapsingHeader("Noise", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        dirty |= ImGui::SliderFloat("Frequency",   &params.noiseScale,  0.0001f, 0.02f, "%.5f");
+        dirty |= ImGui::SliderInt("Octaves",       &params.octaves,     1, 10);
+        dirty |= ImGui::SliderFloat("Persistence", &params.persistence, 0.1f, 1.0f);
+        dirty |= ImGui::SliderFloat("Lacunarity",  &params.lacunarity,  1.0f, 4.0f);
+        dirty |= ImGui::InputInt("Seed",           &params.seed);
+    }
+
+    if (ImGui::CollapsingHeader("Streaming", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        int radius = m_terrainManager->GetLoadRadius();
+        if (ImGui::SliderInt("Load Radius (chunks)", &radius, 0, 6))
+            m_terrainManager->SetLoadRadius(radius);
+        int total = (radius * 2 + 1) * (radius * 2 + 1);
+        ImGui::TextDisabled("Active chunks: %d x %d = %d", radius*2+1, radius*2+1, total);
+    }
+
+    if (dirty)
+        m_terrainManager->Regenerate(params);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    if (ImGui::Button("Generate", ImVec2(-1, 0)))
+    {
+        if (m_callbacks.spawnTerrain)
+            m_callbacks.spawnTerrain(m_callbacks.userData);
+    }
+    ImGui::TextDisabled("Adds a streaming Terrain actor to the level.");
 
     ImGui::End();
 }

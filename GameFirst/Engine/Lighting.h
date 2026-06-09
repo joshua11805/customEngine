@@ -44,7 +44,7 @@ public:
     PointLightData* AllocateLight();
     void FreeLight(PointLightData* pLight) { pLight->isEnabled = false; }
     void SetAmbientLight(const Vector3* color);
-    const Vector3 &GetAmbientLight() const;
+    const Vector3& GetAmbientLight() const;
     void SetActive(Camera* camera, SDL_GPUCommandBuffer* commandBuffer);
 
 

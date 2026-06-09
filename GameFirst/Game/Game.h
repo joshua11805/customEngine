@@ -46,6 +46,10 @@ public:
     void EditorSpawnPrimitive(int type, Vector3 worldPos); // 0=cube, 1=sphere
     void EditorSpawnMesh(const char* path, Vector3 worldPos);
     void EditorRemoveActor(int index);
+    void EditorSpawnTerrain();
+
+    class TerrainManager* GetTerrainManager() const { return m_terrainManager; }
+    class TerrainActor*   GetTerrainActor()   const { return m_terrainActor; }
 
 private:
     Renderer m_renderer;
@@ -85,6 +89,10 @@ private:
 
     // Editor
     class EditorLayer* m_editorLayer = nullptr;
+
+    // Terrain
+    class TerrainManager* m_terrainManager = nullptr; // preview only (scene view streaming)
+    class TerrainActor*   m_terrainActor   = nullptr; // non-owning; owned by m_actors when spawned
 
     // Render targets
     Texture* m_sceneEditorTarget = nullptr; // scene view (editor camera, no post-fx)
