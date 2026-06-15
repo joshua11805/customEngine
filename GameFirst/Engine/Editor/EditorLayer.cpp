@@ -455,7 +455,7 @@ void EditorLayer::DrawSceneView()
             ImVec2 wPos = ImGui::GetWindowPos();
             ImVec2 wSz  = ImGui::GetWindowSize();
             ImDrawList* dl = ImGui::GetForegroundDrawList();
-            const char* hint = "RMB: look  |  MMB: pan  |  Scroll: zoom  |  Alt+LMB: orbit";
+            const char* hint = "RMB: look  |  RMB+WASD: fly  |  MMB: pan  |  Scroll: zoom  |  Alt+LMB: orbit";
             ImVec2 ts = ImGui::CalcTextSize(hint);
             float hx = wPos.x + 8.f;
             float hy = wPos.y + wSz.y - ts.y - 8.f;
@@ -596,6 +596,20 @@ void EditorLayer::UpdateSceneCamera(bool panelHovered)
         m_scenePos += fwd * (io.MouseWheel * zoomSpeed);
         // Also shrink pivot distance so orbit stays sensible after zooming in
         m_scenePivotDist = Math::Max(10.f, m_scenePivotDist - io.MouseWheel * zoomSpeed);
+    }
+
+    // --- WASD flythrough (held while RMB is down) ---
+    if (panelHovered && ImGui::IsMouseDown(ImGuiMouseButton_Right))
+    {
+        float moveSpeed = 200.f * io.DeltaTime;
+        if (io.KeyShift) moveSpeed *= 3.f;
+
+        if (ImGui::IsKeyDown(ImGuiKey_W)) m_scenePos += fwd   * moveSpeed;
+        if (ImGui::IsKeyDown(ImGuiKey_S)) m_scenePos -= fwd   * moveSpeed;
+        if (ImGui::IsKeyDown(ImGuiKey_D)) m_scenePos += right * moveSpeed;
+        if (ImGui::IsKeyDown(ImGuiKey_A)) m_scenePos -= right * moveSpeed;
+        if (ImGui::IsKeyDown(ImGuiKey_E)) m_scenePos += up    * moveSpeed;
+        if (ImGui::IsKeyDown(ImGuiKey_Q)) m_scenePos -= up    * moveSpeed;
     }
 
     // Write the resulting world-to-camera matrix out for Game to use

@@ -167,6 +167,21 @@ void TerrainChunk::Draw(SDL_GPUCommandBuffer* commandBuffer,
     m_terrainVB->Draw(commandBuffer, renderPass);
 }
 
+float TerrainChunk::SampleHeight(const GenParams& params, float worldX, float worldY)
+{
+    FastNoiseLite noise;
+    noise.SetSeed(params.seed);
+    noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    noise.SetFrequency(params.noiseScale);
+    noise.SetFractalType(FastNoiseLite::FractalType_FBm);
+    noise.SetFractalOctaves(params.octaves);
+    noise.SetFractalLacunarity(params.lacunarity);
+    noise.SetFractalGain(params.persistence);
+    float n = noise.GetNoise(worldX, worldY);
+    float t = (n + 1.0f) * 0.5f;
+    return t * params.heightScale;
+}
+
 // Height-based colour bands (water → sand → grass → rock → snow)
 Color4 TerrainChunk::HeightColor(float t)
 {

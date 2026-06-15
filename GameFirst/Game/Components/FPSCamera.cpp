@@ -4,6 +4,7 @@
 #include "Camera.h"
 #include "Game.h"
 #include "JsonUtil.h"
+#include "../Engine/TerrainActor.h"
 
 FPSCamera::FPSCamera(Actor* owner, Game* game)
     : Component(owner)
@@ -85,6 +86,11 @@ void FPSCamera::Update(float deltaTime)
     Vector3 fwd   = yawMat.GetXAxis(); // local X = world forward
     Vector3 right = yawMat.GetYAxis(); // local Y = world right
     m_pos += (fwd * fwdInput + right * rightInput) * (m_moveSpeed * deltaTime);
+
+    // Snap Z to terrain surface if a terrain actor exists
+    if (TerrainActor* terrain = m_game->GetTerrainActor())
+        m_pos.z = terrain->GetHeightAt(m_pos.x, m_pos.y);
+
     m_actor->SetWorldMat(Matrix4::CreateTranslation(m_pos));
 
     // Build camera matrix: tilt by pitch around local Y, spin by yaw around world Z

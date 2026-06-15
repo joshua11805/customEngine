@@ -283,11 +283,12 @@ void Game::UpdateGame()
     // calculate the length of this frame
     float deltaTime = 0.0f;
     {
+        //I should probably expose these numbers so that it can readjust frame rate as needed.
         // Compute delta time
         uint64_t tickNow = SDL_GetTicks();
 
         // wait until 16 ms have elapsed at least
-        while (tickNow - m_ticksCount < 16)
+        while (tickNow - m_ticksCount < 8)
         {
             tickNow = SDL_GetTicks();
         }
@@ -471,6 +472,7 @@ void Game::RenderFrame()
                 m_renderer.EndRenderPass(pass);
             }
         }
+
     }
 
     // ── Passes 2-9: Full game pipeline (only when playing) ────────────────

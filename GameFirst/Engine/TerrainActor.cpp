@@ -50,6 +50,15 @@ void TerrainActor::SetShaders(Shader* scene, Shader* game, Shader* sceneWire)
     if (m_manager) m_manager->SetShaders(scene, game, sceneWire);
 }
 
+float TerrainActor::GetHeightAt(float worldX, float worldY) const
+{
+    if (!m_manager) return 0.f;
+    Vector3 offset = GetPosition();
+    return TerrainChunk::SampleHeight(m_manager->GetParams(),
+                                      worldX - offset.x,
+                                      worldY - offset.y);
+}
+
 const TerrainChunk::GenParams& TerrainActor::GetParams() const
 {
     return m_manager->GetParams();

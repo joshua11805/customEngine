@@ -32,6 +32,10 @@ public:
     // loop never falls back to the generic VertexPosNormalUV pipeline.
     Shader* PickSceneShader(int mode) override;
 
+    // Sample terrain height at a world XY position (accounts for actor offset).
+    // Returns 0 if no manager is present.
+    float GetHeightAt(float worldX, float worldY) const;
+
     // Convenience forwarded to manager
     const TerrainChunk::GenParams& GetParams() const;
     void SetParams(const TerrainChunk::GenParams& p);

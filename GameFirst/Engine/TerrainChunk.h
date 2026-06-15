@@ -48,6 +48,10 @@ public:
     int GetChunkX() const { return m_chunkX; }
     int GetChunkZ() const { return m_chunkZ; }
 
+    // Sample the terrain height at any world XY position using the same noise
+    // parameters used during Generate. Cheap — no VB read, pure CPU math.
+    static float SampleHeight(const GenParams& params, float worldX, float worldY);
+
 private:
     int m_chunkX = 0;
     int m_chunkZ = 0;
