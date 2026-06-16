@@ -92,7 +92,7 @@ bool Shader::CreatePipeline(const SDL_GPUVertexAttribute* vertexAttributes, uint
     pipelineInfo.vertex_shader = m_vertexShader;
     pipelineInfo.fragment_shader = m_fragmentShader;
     pipelineInfo.vertex_input_state = vertexInputState;
-    pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pipelineInfo.primitive_type = m_primitiveType;
     pipelineInfo.rasterizer_state.fill_mode = m_fillMode;
     pipelineInfo.rasterizer_state.cull_mode = m_cullMode;
     pipelineInfo.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;

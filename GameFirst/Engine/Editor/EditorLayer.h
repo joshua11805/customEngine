@@ -4,6 +4,7 @@
 #include <string>
 #include <filesystem>
 #include "../EngineMath.h"
+#include "GizmoRenderer.h"
 
 class Renderer;
 class Actor;
@@ -76,6 +77,13 @@ public:
     void EndFrame();
     void Prepare(SDL_GPUCommandBuffer* cmd);
     void Render(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass);
+
+    // Upload gizmo geometry to the GPU — call BEFORE BeginCommandBuffer each frame.
+    void PrepareGizmos(Renderer* renderer);
+
+    // Draw gizmos into the scene editor render pass — call after the scene actor pass.
+    // Camera::SetActive must already have been called so the VP matrix is pushed.
+    void RenderGizmos(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass);
 
     bool WantCaptureMouse()    const;
     bool WantCaptureKeyboard() const;
@@ -151,4 +159,23 @@ private:
     float   m_sceneViewW    = 0.f;
     float   m_sceneViewH    = 0.f;
     Matrix4 m_sceneViewProj = Matrix4::Identity; // copied from EditorFrameData each frame
+
+    // Gizmo system
+    GizmoRenderer m_gizmoRenderer;
+    GizmoMode     m_gizmoMode       = GizmoMode::Translate;
+    bool          m_gizmoReady      = false;
+    float         m_gizmoHandleSize = 60.f; // recomputed each frame from camera distance
+
+    // Translate-gizmo drag state
+    int     m_dragAxis        = 0;          // 0=none, 1=X, 2=Y, 3=Z
+    float   m_dragT           = 0.f;        // axis projection of click point at drag start
+    Vector3 m_dragAxisVec     = Vector3::Zero;
+    Vector3 m_dragAnchorPos   = Vector3::Zero; // actor position when drag started
+    Vector3 m_dragPlaneNormal = Vector3::Zero; // normal of the drag plane
+
+    // Unproject a screen-pixel ray into world space (origin + normalised direction).
+    // Returns false if the pixel is outside the panel.
+    bool ScreenToWorldRay(float pixelX, float pixelY,
+                          Vector3& outOrigin, Vector3& outDir) const;
+
 };

@@ -393,6 +393,10 @@ void Game::RenderFrame()
     if (m_uiCanvas)
         m_uiCanvas->Prepare();
 
+    // Upload gizmo geometry to GPU before acquiring the command buffer
+    if (m_editorLayer)
+        m_editorLayer->PrepareGizmos(&m_renderer);
+
     SDL_GPUCommandBuffer* commandBuffer = m_renderer.BeginCommandBuffer();
     if (!commandBuffer)
         return;
@@ -445,6 +449,12 @@ void Game::RenderFrame()
                 Shader* terrainShader = m_assetManager->GetShader(
                     isWire ? "SceneWire_Terrain" : "Terrain");
                 m_terrainManager->Draw(commandBuffer, pass, terrainShader);
+            }
+            // Gizmos drawn last so they appear on top of all scene geometry
+            if (m_editorLayer && !m_isPlaying)
+            {
+                m_editorCamera->SetActive(commandBuffer); // re-push VP so gizmo shader has it
+                m_editorLayer->RenderGizmos(commandBuffer, pass);
             }
             m_renderer.EndRenderPass(pass);
         }

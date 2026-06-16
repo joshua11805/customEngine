@@ -1,9 +1,11 @@
 #include "../pch.h"
 #include "EditorLayer.h"
 #include "../Renderer.h"
+#include "../Actor.h"
 #include "../Texture.h"
 #include "../Actor.h"
 #include "../EngineMath.h"
+#include <cfloat>
 #include "../TerrainManager.h"
 #include "../TerrainActor.h"
 
@@ -63,11 +65,17 @@ bool EditorLayer::Init(Renderer* renderer, const char* projectRoot)
     info.MSAASamples        = SDL_GPU_SAMPLECOUNT_1;
     ImGui_ImplSDLGPU3_Init(&info);
 
+    // GizmoRenderer is initialised lazily in BeginFrame once we have a scene RT
     return true;
 }
 
 void EditorLayer::Shutdown()
 {
+    if (m_gizmoReady)
+    {
+        m_gizmoRenderer.Shutdown();
+        m_gizmoReady = false;
+    }
     ImGui_ImplSDLGPU3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
@@ -97,6 +105,16 @@ void EditorLayer::BeginFrame(const EditorFrameData& data, const EditorCallbacks&
     m_terrainManager = data.terrainManager;
     m_terrainActor   = data.terrainActor;
     m_callbacks      = callbacks;
+
+    // Lazy-init gizmo renderer once we have a valid scene render target
+    if (!m_gizmoReady && m_sceneEditorRT)
+    {
+        m_gizmoReady = m_gizmoRenderer.Init(Renderer::Get(), m_sceneEditorRT);
+    }
+
+    // Reset gizmo geometry for this frame
+    if (m_gizmoReady)
+        m_gizmoRenderer.BeginFrame();
 
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -301,29 +319,26 @@ bool EditorLayer::ScreenToWorldGround(float pixelX, float pixelY,
     invVP.Invert();
 
     auto Unproject = [&](float z) -> Vector3 {
-        // Homogeneous clip coords
-        float clipX = ndcX, clipY = ndcY, clipZ = z, clipW = 1.f;
-        // Multiply by inverse VP (row-major: p * M)
-        const float* m = reinterpret_cast<const float*>(&invVP);
-        float wx = clipX*m[0] + clipY*m[4] + clipZ*m[8]  + clipW*m[12];
-        float wy = clipX*m[1] + clipY*m[5] + clipZ*m[9]  + clipW*m[13];
-        float wz = clipX*m[2] + clipY*m[6] + clipZ*m[10] + clipW*m[14];
-        float ww = clipX*m[3] + clipY*m[7] + clipZ*m[11] + clipW*m[15];
+        float wx = ndcX*invVP.mat[0][0] + ndcY*invVP.mat[1][0] + z*invVP.mat[2][0] + invVP.mat[3][0];
+        float wy = ndcX*invVP.mat[0][1] + ndcY*invVP.mat[1][1] + z*invVP.mat[2][1] + invVP.mat[3][1];
+        float wz = ndcX*invVP.mat[0][2] + ndcY*invVP.mat[1][2] + z*invVP.mat[2][2] + invVP.mat[3][2];
+        float ww = ndcX*invVP.mat[0][3] + ndcY*invVP.mat[1][3] + z*invVP.mat[2][3] + invVP.mat[3][3];
         if (fabsf(ww) < 1e-6f) ww = 1e-6f;
         return Vector3(wx/ww, wy/ww, wz/ww);
     };
 
-    Vector3 near3 = Unproject(0.f);
-    Vector3 far3  = Unproject(1.f);
+    // Use camera position as ray origin and near-plane unproject for direction.
+    Vector3 nearPt = Unproject(0.f);
+    Vector3 origin = m_scenePos;
+    Vector3 dir    = nearPt - origin;
 
-    Vector3 dir = far3 - near3;
     float dz = dir.z;
     if (fabsf(dz) < 1e-6f) return false;
 
-    float t = (groundZ - near3.z) / dz;
+    float t = (groundZ - origin.z) / dz;
     if (t < 0.f) return false;
 
-    outWorld = near3 + dir * t;
+    outWorld = origin + dir * t;
     outWorld.z = groundZ;
     return true;
 }
@@ -350,6 +365,28 @@ void EditorLayer::DrawSceneView()
             if (ImGui::Combo("##DrawMode", &current, k_modeNames, IM_ARRAYSIZE(k_modeNames)))
                 *m_sceneViewMode = static_cast<SceneViewMode>(current);
             ImGui::SameLine();
+        }
+
+        // Gizmo mode toolbar (only visible when not playing and something is selected)
+        if (!m_isPlaying && m_gizmoReady)
+        {
+            ImGui::SameLine();
+            auto GizmoBtn = [&](const char* label, GizmoMode mode)
+            {
+                bool active = (m_gizmoMode == mode);
+                if (active)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.26f, 0.59f, 0.26f, 1.f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.70f, 0.32f, 1.f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.48f, 0.20f, 1.f));
+                }
+                if (ImGui::Button(label)) m_gizmoMode = mode;
+                if (active) ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+            };
+            GizmoBtn("Move [W]",   GizmoMode::Translate);
+            GizmoBtn("Rotate [E]", GizmoMode::Rotate);
+            GizmoBtn("Scale [R]",  GizmoMode::Scale);
         }
 
         if (!m_isPlaying)
@@ -455,13 +492,196 @@ void EditorLayer::DrawSceneView()
             ImVec2 wPos = ImGui::GetWindowPos();
             ImVec2 wSz  = ImGui::GetWindowSize();
             ImDrawList* dl = ImGui::GetForegroundDrawList();
-            const char* hint = "RMB: look  |  RMB+WASD: fly  |  MMB: pan  |  Scroll: zoom  |  Alt+LMB: orbit";
+            const char* hint = "RMB: look  |  RMB+WASD: fly  |  MMB: pan  |  Scroll: zoom  |  Alt+LMB: orbit  |  LMB: pick";
             ImVec2 ts = ImGui::CalcTextSize(hint);
             float hx = wPos.x + 8.f;
             float hy = wPos.y + wSz.y - ts.y - 8.f;
             dl->AddRectFilled(ImVec2(hx - 2, hy - 2), ImVec2(hx + ts.x + 2, hy + ts.y + 2),
                               IM_COL32(0, 0, 0, 140), 3.f);
             dl->AddText(ImVec2(hx, hy), IM_COL32(180, 180, 180, 200), hint);
+        }
+
+        // Mouse interaction: gizmo drag, pick, hotkeys
+        if (!m_isPlaying && m_actors && m_selectedActor)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            bool altHeld = io.KeyAlt;
+            bool rmbDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            bool lmbDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+
+            // ── Translate gizmo drag ──────────────────────────────────────────
+            Actor* selActor = (*m_selectedActor >= 0 && *m_selectedActor < (int)m_actors->size())
+                              ? (*m_actors)[*m_selectedActor] : nullptr;
+
+            if (m_gizmoMode == GizmoMode::Translate && selActor && !altHeld && !rmbDown)
+            {
+                ImVec2 mp = io.MousePos;
+                Vector3 rayOrigin, rayDir;
+                // Allow ray even outside panel when already dragging (mouse may leave the panel)
+                bool havRay = (m_dragAxis != 0 || panelHovered)
+                              && ScreenToWorldRay(mp.x, mp.y, rayOrigin, rayDir);
+
+                // Begin drag: hit-test gizmo on LMB press
+                if (m_dragAxis == 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && havRay && panelHovered)
+                {
+                    int hit = m_gizmoRenderer.HitTestTranslateGizmo(
+                        selActor->GetTransform(), m_gizmoHandleSize, rayOrigin, rayDir);
+                    if (hit > 0)
+                    {
+                        m_dragAxis = hit;
+                        m_dragAnchorPos = selActor->GetPosition();
+
+                        Matrix4 rotOnly = selActor->GetTransform();
+                        rotOnly.mat[3][0] = rotOnly.mat[3][1] = rotOnly.mat[3][2] = 0.f;
+                        Vector3 axes[3] = {
+                            Vector3::Normalize(rotOnly.GetXAxis()),
+                            Vector3::Normalize(rotOnly.GetYAxis()),
+                            Vector3::Normalize(rotOnly.GetZAxis()),
+                        };
+                        m_dragAxisVec = axes[m_dragAxis - 1];
+
+                        // Build a drag plane: contains the axis, normal faces the camera.
+                        // planeNormal = normalize(cross(axis, cross(axis, camDir)))
+                        // This gives the plane that best faces the camera for this axis.
+                        Vector3 camDir = Vector3::Normalize(m_dragAnchorPos - rayOrigin);
+                        Vector3 perp   = Vector3::Cross(m_dragAxisVec, camDir);
+                        m_dragPlaneNormal = Vector3::Normalize(Vector3::Cross(perp, m_dragAxisVec));
+
+                        // Intersect the click ray with the plane to get drag start world point
+                        float denom = Vector3::Dot(m_dragPlaneNormal, rayDir);
+                        if (fabsf(denom) > 1e-6f)
+                        {
+                            float t = Vector3::Dot(m_dragAnchorPos - rayOrigin, m_dragPlaneNormal) / denom;
+                            Vector3 hitPt = rayOrigin + rayDir * t;
+                            // Project onto axis — store initial offset along axis
+                            m_dragT = Vector3::Dot(hitPt - m_dragAnchorPos, m_dragAxisVec);
+                        }
+                        else m_dragT = 0.f;
+                    }
+                }
+
+                // Continue drag: intersect ray with drag plane, project onto axis, move actor.
+                if (m_dragAxis != 0 && lmbDown && havRay)
+                {
+                    float denom = Vector3::Dot(m_dragPlaneNormal, rayDir);
+                    if (fabsf(denom) > 1e-6f)
+                    {
+                        float t = Vector3::Dot(m_dragAnchorPos - rayOrigin, m_dragPlaneNormal) / denom;
+                        Vector3 hitPt = rayOrigin + rayDir * t;
+                        float newT = Vector3::Dot(hitPt - m_dragAnchorPos, m_dragAxisVec);
+                        selActor->SetPosition(m_dragAnchorPos + m_dragAxisVec * (newT - m_dragT));
+                    }
+                }
+
+                // End drag on LMB release
+                if (m_dragAxis != 0 && !lmbDown)
+                    m_dragAxis = 0;
+            }
+            else if (!lmbDown)
+            {
+                m_dragAxis = 0; // clear drag if mode changed
+            }
+
+            // ── Mouse pick (LMB click, not dragging gizmo, not alt) ──────────
+            if (!altHeld && !rmbDown && m_dragAxis == 0
+                && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && panelHovered)
+            {
+                ImVec2 mp = io.MousePos;
+                Vector3 rayOrigin, rayDir;
+                if (ScreenToWorldRay(mp.x, mp.y, rayOrigin, rayDir))
+                {
+                    // Check if clicking on an existing gizmo — if so, don't deselect
+                    bool clickedGizmo = false;
+                    if (selActor && m_gizmoMode == GizmoMode::Translate)
+                    {
+                        int h = m_gizmoRenderer.HitTestTranslateGizmo(
+                            selActor->GetTransform(), m_gizmoHandleSize, rayOrigin, rayDir);
+                        clickedGizmo = (h > 0);
+                    }
+
+                    if (!clickedGizmo)
+                    {
+                        float bestT = FLT_MAX;
+                        int   bestIdx = -1;
+
+                        for (int i = 0; i < (int)m_actors->size(); ++i)
+                        {
+                            Actor* a = (*m_actors)[i];
+                            Vector3 center = a->GetPosition();
+                            Vector3 scale  = a->GetScale();
+                            Vector3 ext(50.f * fabsf(scale.x),
+                                        50.f * fabsf(scale.y),
+                                        50.f * fabsf(scale.z));
+
+                            Vector3 mn = center - ext;
+                            Vector3 vx = center + ext;
+                            float tMin = 0.f, tMax = FLT_MAX;
+                            bool hit = true;
+                            const float* ro  = &rayOrigin.x;
+                            const float* rd  = &rayDir.x;
+                            const float* bmn = &mn.x;
+                            const float* bmx = &vx.x;
+                            for (int ax = 0; ax < 3 && hit; ++ax)
+                            {
+                                if (fabsf(rd[ax]) < 1e-6f)
+                                {
+                                    if (ro[ax] < bmn[ax] || ro[ax] > bmx[ax]) hit = false;
+                                }
+                                else
+                                {
+                                    float t1 = (bmn[ax] - ro[ax]) / rd[ax];
+                                    float t2 = (bmx[ax] - ro[ax]) / rd[ax];
+                                    if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                                    tMin = Math::Max(tMin, t1);
+                                    tMax = Math::Min(tMax, t2);
+                                    if (tMin > tMax) hit = false;
+                                }
+                            }
+                            if (hit && tMin > 0.f && tMin < bestT)
+                            {
+                                bestT   = tMin;
+                                bestIdx = i;
+                            }
+                        }
+
+                        *m_selectedActor = bestIdx;
+                    }
+                }
+            }
+
+            // Gizmo hotkeys (W/E/R when hovering scene and RMB is not held for fly)
+            if (panelHovered && !rmbDown && !io.WantCaptureKeyboard)
+            {
+                if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_gizmoMode = GizmoMode::Translate;
+                if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_gizmoMode = GizmoMode::Rotate;
+                if (ImGui::IsKeyPressed(ImGuiKey_R, false)) m_gizmoMode = GizmoMode::Scale;
+            }
+        }
+
+        // Build gizmo geometry for the selected actor
+        if (!m_isPlaying && m_gizmoReady && m_actors && m_selectedActor
+            && *m_selectedActor >= 0 && *m_selectedActor < (int)m_actors->size())
+        {
+            Actor* sel = (*m_actors)[*m_selectedActor];
+            const Matrix4& xform = sel->GetTransform();
+
+            // Scale gizmo handle with camera distance so it stays ~constant screen size
+            Vector3 actorPos  = sel->GetPosition();
+            Vector3 camDelta  = actorPos - m_scenePos;
+            float   camDist   = Math::Max(camDelta.Length(), 50.f);
+            m_gizmoHandleSize = camDist * 0.25f;
+            const float handleSize = m_gizmoHandleSize;
+
+            switch (m_gizmoMode)
+            {
+                case GizmoMode::Translate: m_gizmoRenderer.AddTranslateGizmo(xform, handleSize); break;
+                case GizmoMode::Rotate:    m_gizmoRenderer.AddRotateGizmo   (xform, handleSize); break;
+                case GizmoMode::Scale:     m_gizmoRenderer.AddScaleGizmo    (xform, handleSize); break;
+            }
+
+            Vector3 scale = sel->GetScale();
+            m_gizmoRenderer.AddSelectionBox(xform,
+                Vector3(25.f * fabsf(scale.x), 25.f * fabsf(scale.y), 25.f * fabsf(scale.z)));
         }
 
         // "PLAYING" badge
@@ -525,6 +745,51 @@ void EditorLayer::DrawGameView()
     }
 
     ImGui::End();
+}
+
+void EditorLayer::PrepareGizmos(Renderer* renderer)
+{
+    if (m_gizmoReady && m_gizmoRenderer.HasGeometry())
+        m_gizmoRenderer.Upload(renderer);
+}
+
+void EditorLayer::RenderGizmos(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass)
+{
+    if (m_gizmoReady)
+        m_gizmoRenderer.Draw(cmd, pass);
+}
+
+bool EditorLayer::ScreenToWorldRay(float pixelX, float pixelY,
+                                    Vector3& outOrigin, Vector3& outDir) const
+{
+    if (m_sceneViewW <= 0.f || m_sceneViewH <= 0.f) return false;
+
+    float ndcX =  ((pixelX - m_sceneViewX) / m_sceneViewW) * 2.f - 1.f;
+    float ndcY = 1.f - ((pixelY - m_sceneViewY) / m_sceneViewH) * 2.f;
+
+    Matrix4 invVP = m_sceneViewProj;
+    invVP.Invert();
+
+    // Unproject the near-plane point to get a world-space point on the ray.
+    // Use z=0 (near plane in [0,1] depth range) — this gives a stable world position.
+    auto Unproject = [&](float z) -> Vector3
+    {
+        float wx = ndcX*invVP.mat[0][0] + ndcY*invVP.mat[1][0] + z*invVP.mat[2][0] + invVP.mat[3][0];
+        float wy = ndcX*invVP.mat[0][1] + ndcY*invVP.mat[1][1] + z*invVP.mat[2][1] + invVP.mat[3][1];
+        float wz = ndcX*invVP.mat[0][2] + ndcY*invVP.mat[1][2] + z*invVP.mat[2][2] + invVP.mat[3][2];
+        float ww = ndcX*invVP.mat[0][3] + ndcY*invVP.mat[1][3] + z*invVP.mat[2][3] + invVP.mat[3][3];
+        if (fabsf(ww) < 1e-6f) ww = 1e-6f;
+        return Vector3(wx/ww, wy/ww, wz/ww);
+    };
+
+    Vector3 nearPt = Unproject(0.f);
+    Vector3 dir    = nearPt - m_scenePos;
+    float   len    = dir.Length();
+    if (len < 1e-6f) return false;
+
+    outOrigin = m_scenePos;
+    outDir    = dir * (1.f / len);
+    return true;
 }
 
 // Build a world-to-camera matrix from the scene camera's yaw/pitch/position.
